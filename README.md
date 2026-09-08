@@ -53,11 +53,11 @@ npx @vibe-cafe/vibe-usage quota fetch --product kimi-code --product zcode --json
 
 The versioned `quota` JSON contract is designed for local desktop clients. `discover` only checks ordinary app, config-directory, and executable presence signals: it does not open credentials or use the network. `fetch` invokes only products explicitly named with `--product`, and one provider failure does not prevent results for the others.
 
-- **Kimi Code** reads the official Kimi CLI OAuth file (`$KIMI_SHARE_DIR/credentials/kimi-code.json`, otherwise `~/.kimi/credentials/kimi-code.json`) and calls `https://api.kimi.com/coding/v1/usages`. It never refreshes or writes the credential.
+- **Kimi Code** reads the official Kimi CLI OAuth file (`$KIMI_SHARE_DIR/credentials/kimi-code.json`, otherwise `~/.kimi/credentials/kimi-code.json`) and calls `https://api.kimi.com/coding/v1/usages`. When the short-lived access token is close to expiry, it uses Kimi's standard OAuth refresh flow and atomically rotates the official credential with owner-only permissions. Refreshes are serialized across Vibe Usage processes and re-check the file before writing so a concurrent Kimi CLI refresh wins safely.
 - **ZCode / Z.ai** accepts only a caller-supplied `Z_AI_API_KEY` and calls `https://api.z.ai/api/monitor/usage/quota/limit`. It does not read ZCode's private OAuth state.
 - **Grok (Cursor)** is discoverable but not fetchable until an official or stable local quota protocol is available. The implementation does not read browser cookies or request extra system permissions.
 
-Quota results are never uploaded or added to incremental sync state. The disposable cache at `~/.vibe-usage/quota-cache.json` contains normalized meters only, is scoped to a one-way hash of the active credential, rejects expired windows, and has a seven-day hard expiry. No credential is stored in that cache.
+Quota results are never uploaded or added to incremental sync state. The disposable cache at `~/.vibe-usage/quota-cache.json` contains normalized meters only, is scoped to a one-way hash of the active credential, rejects expired windows, and has a seven-day hard expiry. No credential is stored in that cache, logs, or command output; the only credential write is Kimi's standard token rotation back to Kimi's own credential file.
 
 ## Supported Tools
 

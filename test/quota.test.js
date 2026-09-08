@@ -1,8 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { discoverQuotaProducts, fetchQuotaProducts } from '../src/quotas/registry.js';
 import {
   fetchKimiCodeQuota,
@@ -15,6 +28,24 @@ function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
     headers: { 'content-type': 'application/json' },
+  });
+}
+
+function runNodeModule(script, environment = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+      env: { ...process.env, ...environment },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', code => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`child exited ${code}: ${stderr}`));
+    });
   });
 }
 
@@ -82,7 +113,7 @@ test('Kimi parser supports summary, detail.remaining, duration, and reset spelli
   assert.equal(meters[1].resetsAt, '2026-09-07T05:00:00.000Z');
 });
 
-test('Kimi fetch reads its official file, never refreshes it, and sends bearer auth', async () => {
+test('Kimi fetch keeps a fresh official login unchanged and sends bearer auth', async () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-quota-'));
   const share = join(root, 'share');
   mkdirSync(join(share, 'credentials'), { recursive: true });
@@ -112,12 +143,11 @@ test('Kimi fetch reads its official file, never refreshes it, and sends bearer a
   }
 });
 
-test('Kimi expired credentials return a provider status without network access', async () => {
+test('Kimi expired credentials without a refresh token return without network access', async () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-expired-'));
   mkdirSync(join(root, '.kimi', 'credentials'), { recursive: true });
   writeFileSync(join(root, '.kimi', 'credentials', 'kimi-code.json'), JSON.stringify({
     access_token: 'expired',
-    refresh_token: 'not-refreshed',
     expires_at: 1,
   }));
   let called = false;
@@ -130,6 +160,281 @@ test('Kimi expired credentials return a provider status without network access',
     });
     assert.equal(result.status, 'expired_credentials');
     assert.equal(called, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Kimi refreshes an expiring login, rotates it atomically, and keeps mode private', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-refresh-'));
+  const credentialDirectory = join(root, '.kimi', 'credentials');
+  const credentialPath = join(credentialDirectory, 'kimi-code.json');
+  const oauthURL = 'https://auth.example.test/token';
+  const usageURL = 'https://api.example.test/usages';
+  mkdirSync(credentialDirectory, { recursive: true });
+  writeFileSync(credentialPath, JSON.stringify({
+    access_token: 'expired-access-token',
+    refresh_token: 'original-refresh-token',
+    expires_at: 1,
+    expires_in: 900,
+    scope: 'openid',
+    token_type: 'Bearer',
+  }), { mode: 0o600 });
+  const calls = [];
+  try {
+    const now = new Date('2026-09-07T00:00:00Z');
+    const result = await fetchKimiCodeQuota({
+      environment: {},
+      home: root,
+      oauthURL,
+      usageURL,
+      now,
+      sleepImpl: async () => {},
+      fetchImpl: async (url, request) => {
+        calls.push([url, request]);
+        if (url === oauthURL) {
+          const body = new URLSearchParams(request.body);
+          assert.equal(request.method, 'POST');
+          assert.equal(body.get('grant_type'), 'refresh_token');
+          assert.equal(body.get('refresh_token'), 'original-refresh-token');
+          return jsonResponse({
+            access_token: 'fresh-access-token',
+            refresh_token: 'rotated-refresh-token',
+            expires_in: 900,
+            scope: 'openid',
+            token_type: 'Bearer',
+          });
+        }
+        assert.equal(request.headers.Authorization, 'Bearer fresh-access-token');
+        return jsonResponse(kimiPayload);
+      },
+    });
+    assert.equal(result.status, 'ok');
+    assert.deepEqual(calls.map(call => call[0]), [oauthURL, usageURL]);
+    const persisted = JSON.parse(readFileSync(credentialPath, 'utf8'));
+    assert.equal(persisted.access_token, 'fresh-access-token');
+    assert.equal(persisted.refresh_token, 'rotated-refresh-token');
+    assert.equal(persisted.expires_at, now.getTime() / 1000 + 900);
+    assert.equal(statSync(credentialPath).mode & 0o777, 0o600);
+    assert.equal(readdirSync(credentialDirectory).some(name => name.includes('.tmp')), false);
+    assert.equal(existsSync(`${credentialPath}.vibe-usage-refresh-lock`), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Kimi retries usage once with a forced refresh after HTTP 401', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-usage-401-'));
+  const credentialDirectory = join(root, '.kimi', 'credentials');
+  mkdirSync(credentialDirectory, { recursive: true });
+  writeFileSync(join(credentialDirectory, 'kimi-code.json'), JSON.stringify({
+    access_token: 'rejected-access-token',
+    refresh_token: 'usable-refresh-token',
+    expires_at: 2_000_000_000,
+    expires_in: 900,
+  }), { mode: 0o600 });
+  const authorizations = [];
+  let refreshCalls = 0;
+  try {
+    const result = await fetchKimiCodeQuota({
+      environment: {},
+      home: root,
+      oauthURL: 'https://auth.example.test/token',
+      usageURL: 'https://api.example.test/usages',
+      now: new Date('2026-09-07T00:00:00Z'),
+      sleepImpl: async () => {},
+      fetchImpl: async (url, request) => {
+        if (url.includes('auth.example')) {
+          refreshCalls += 1;
+          return jsonResponse({
+            access_token: 'replacement-access-token',
+            refresh_token: 'replacement-refresh-token',
+            expires_in: 900,
+          });
+        }
+        authorizations.push(request.headers.Authorization);
+        return authorizations.length === 1 ? jsonResponse({}, 401) : jsonResponse(kimiPayload);
+      },
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(refreshCalls, 1);
+    assert.deepEqual(authorizations, [
+      'Bearer rejected-access-token',
+      'Bearer replacement-access-token',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Kimi serializes concurrent refreshes and reuses the rotated login', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-concurrent-refresh-'));
+  const credentialDirectory = join(root, '.kimi', 'credentials');
+  mkdirSync(credentialDirectory, { recursive: true });
+  writeFileSync(join(credentialDirectory, 'kimi-code.json'), JSON.stringify({
+    access_token: 'expired-concurrent-access',
+    refresh_token: 'concurrent-refresh-token',
+    expires_at: 1,
+    expires_in: 900,
+  }), { mode: 0o600 });
+  let refreshCalls = 0;
+  let usageCalls = 0;
+  const options = {
+    environment: {},
+    home: root,
+    oauthURL: 'https://auth.example.test/token',
+    usageURL: 'https://api.example.test/usages',
+    now: new Date('2026-09-07T00:00:00Z'),
+    fetchImpl: async url => {
+      if (url.includes('auth.example')) {
+        refreshCalls += 1;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        return jsonResponse({
+          access_token: 'shared-fresh-access',
+          refresh_token: 'shared-fresh-refresh',
+          expires_in: 900,
+        });
+      }
+      usageCalls += 1;
+      return jsonResponse(kimiPayload);
+    },
+  };
+  try {
+    const results = await Promise.all([
+      fetchKimiCodeQuota(options),
+      fetchKimiCodeQuota(options),
+    ]);
+    assert.deepEqual(results.map(result => result.status), ['ok', 'ok']);
+    assert.equal(refreshCalls, 1);
+    assert.equal(usageCalls, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Kimi refresh lock coordinates separate CLI processes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-cross-process-'));
+  const credentialDirectory = join(root, '.kimi', 'credentials');
+  mkdirSync(credentialDirectory, { recursive: true });
+  writeFileSync(join(credentialDirectory, 'kimi-code.json'), JSON.stringify({
+    access_token: 'expired-cross-process-access',
+    refresh_token: 'cross-process-refresh-token',
+    expires_at: 1,
+    expires_in: 900,
+  }), { mode: 0o600 });
+  let refreshCalls = 0;
+  const server = createServer(async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url === '/token') {
+      refreshCalls += 1;
+      await new Promise(resolve => setTimeout(resolve, 50));
+      response.end(JSON.stringify({
+        access_token: 'cross-process-fresh-access',
+        refresh_token: 'cross-process-fresh-refresh',
+        expires_in: 900,
+      }));
+      return;
+    }
+    response.end(JSON.stringify(kimiPayload));
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const providerURL = pathToFileURL(join(process.cwd(), 'src', 'quotas', 'providers',
+      'kimi-code.js')).href;
+    const script = `
+      import { fetchKimiCodeQuota } from ${JSON.stringify(providerURL)};
+      const result = await fetchKimiCodeQuota({
+        home: process.env.TEST_KIMI_HOME,
+        environment: {},
+        oauthURL: process.env.TEST_KIMI_OAUTH_URL,
+        usageURL: process.env.TEST_KIMI_USAGE_URL,
+        now: new Date('2026-09-07T00:00:00Z'),
+      });
+      process.stdout.write(result.status);
+    `;
+    const environment = {
+      TEST_KIMI_HOME: root,
+      TEST_KIMI_OAUTH_URL: `http://127.0.0.1:${address.port}/token`,
+      TEST_KIMI_USAGE_URL: `http://127.0.0.1:${address.port}/usages`,
+    };
+    const results = await Promise.all([
+      runNodeModule(script, environment),
+      runNodeModule(script, environment),
+    ]);
+    assert.deepEqual(results, ['ok', 'ok']);
+    assert.equal(refreshCalls, 1);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Kimi treats refresh HTTP 401 and 403 as unauthorized without leaking credentials', async t => {
+  for (const status of [401, 403]) {
+    await t.test(`HTTP ${status}`, async () => {
+      const root = mkdtempSync(join(tmpdir(), `vibe-usage-kimi-refresh-${status}-`));
+      const credentialDirectory = join(root, '.kimi', 'credentials');
+      mkdirSync(credentialDirectory, { recursive: true });
+      writeFileSync(join(credentialDirectory, 'kimi-code.json'), JSON.stringify({
+        access_token: `secret-access-${status}`,
+        refresh_token: `secret-refresh-${status}`,
+        expires_at: 1,
+      }), { mode: 0o600 });
+      try {
+        const result = await fetchKimiCodeQuota({
+          environment: {},
+          home: root,
+          oauthURL: 'https://auth.example.test/token',
+          now: new Date('2026-09-07T00:00:00Z'),
+          sleepImpl: async () => {},
+          fetchImpl: async () => jsonResponse({
+            error_description: `server echoed secret-refresh-${status}`,
+          }, status),
+        });
+        const serialized = JSON.stringify(result);
+        assert.equal(result.status, 'unauthorized');
+        assert.equal(serialized.includes(`secret-access-${status}`), false);
+        assert.equal(serialized.includes(`secret-refresh-${status}`), false);
+        assert.equal(serialized.includes('server echoed'), false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('Kimi refresh retry failures stay generic and never include token-shaped server errors', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-refresh-redaction-'));
+  const credentialDirectory = join(root, '.kimi', 'credentials');
+  mkdirSync(credentialDirectory, { recursive: true });
+  writeFileSync(join(credentialDirectory, 'kimi-code.json'), JSON.stringify({
+    access_token: 'secret-expired-access',
+    refresh_token: 'secret-refresh-value',
+    expires_at: 1,
+  }), { mode: 0o600 });
+  let calls = 0;
+  try {
+    const result = await fetchKimiCodeQuota({
+      environment: {},
+      home: root,
+      oauthURL: 'https://auth.example.test/token',
+      now: new Date('2026-09-07T00:00:00Z'),
+      sleepImpl: async () => {},
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({ error_description: 'secret-refresh-value' }, 503);
+      },
+    });
+    const serialized = JSON.stringify(result);
+    assert.equal(calls, 3);
+    assert.equal(result.status, 'retryable_error');
+    assert.equal(serialized.includes('secret-expired-access'), false);
+    assert.equal(serialized.includes('secret-refresh-value'), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
