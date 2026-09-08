@@ -26,6 +26,23 @@ test('unknown top-level command fails instead of falling through to init or sync
   assert.match(result.stderr, /Unknown command: definitely-not-a-command/);
 });
 
+test('quota discover prints a versioned JSON-only contract', () => {
+  const result = run('quota', 'discover', '--json');
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.schemaVersion, 1);
+  assert.deepEqual(payload.products.map(product => product.id), [
+    'kimi-code', 'zcode', 'cursor-grok',
+  ]);
+});
+
+test('quota fetch rejects unsupported products as a contract error', () => {
+  const result = run('quota', 'fetch', '--product', 'cursor-grok', '--json');
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /Unsupported quota product: cursor-grok/);
+});
+
 test('unknown daemon subcommand fails instead of starting the foreground loop', () => {
   const result = run('daemon', 'stauts');
   assert.equal(result.status, 1);
