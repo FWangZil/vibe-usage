@@ -477,7 +477,7 @@ test('provider meter identifiers remain unique when upstream identifiers repeat'
   ]);
 });
 
-test('Z.ai fetch requires an explicit key and isolates authorization failure', async () => {
+test('ZCode fetch requires an explicit regional key and isolates authorization failure', async () => {
   let called = false;
   const missing = await fetchZaiQuota({
     environment: {},
@@ -496,6 +496,57 @@ test('Z.ai fetch requires an explicit key and isolates authorization failure', a
   });
   assert.equal(authorization, 'Bearer zai-fixture-key');
   assert.equal(denied.status, 'unauthorized');
+});
+
+test('ZCode routes BigModel and Z.ai keys only to their matching regional quota hosts', async () => {
+  const requests = [];
+  const fetchImpl = async (url, request) => {
+    requests.push([url, request.headers.Authorization]);
+    return jsonResponse(zaiPayload);
+  };
+
+  const bigModel = await fetchZaiQuota({
+    environment: { BIGMODEL_API_KEY: 'bigmodel-fixture-key' },
+    fetchImpl,
+  });
+  const zai = await fetchZaiQuota({
+    environment: { Z_AI_API_KEY: 'zai-fixture-key' },
+    fetchImpl,
+  });
+
+  assert.equal(bigModel.status, 'ok');
+  assert.equal(zai.status, 'ok');
+  assert.notEqual(bigModel.cacheScope, zai.cacheScope);
+  assert.deepEqual(requests, [
+    [
+      'https://open.bigmodel.cn/api/monitor/usage/quota/limit',
+      'Bearer bigmodel-fixture-key',
+    ],
+    [
+      'https://api.z.ai/api/monitor/usage/quota/limit',
+      'Bearer zai-fixture-key',
+    ],
+  ]);
+});
+
+test('an explicitly named BigModel key wins without sending either key to the other region', async () => {
+  let request;
+  const result = await fetchZaiQuota({
+    environment: {
+      BIGMODEL_API_KEY: 'bigmodel-fixture-key',
+      Z_AI_API_KEY: 'zai-fixture-key',
+    },
+    fetchImpl: async (url, options) => {
+      request = [url, options.headers.Authorization];
+      return jsonResponse(zaiPayload);
+    },
+  });
+
+  assert.equal(result.status, 'ok');
+  assert.deepEqual(request, [
+    'https://open.bigmodel.cn/api/monitor/usage/quota/limit',
+    'Bearer bigmodel-fixture-key',
+  ]);
 });
 
 test('fetch handles only requested products and uses sanitized cache on transient failure', async () => {

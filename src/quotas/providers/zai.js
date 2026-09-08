@@ -2,7 +2,30 @@ import { attachCacheScope } from '../cache.js';
 import { quotaResult } from '../schema.js';
 
 const PRODUCT_ID = 'zcode';
-const USAGE_URL = 'https://api.z.ai/api/monitor/usage/quota/limit';
+const BIGMODEL_USAGE_URL = 'https://open.bigmodel.cn/api/monitor/usage/quota/limit';
+const ZAI_USAGE_URL = 'https://api.z.ai/api/monitor/usage/quota/limit';
+
+function credential(environment) {
+  const bigModelToken = environment.BIGMODEL_API_KEY?.trim();
+  if (bigModelToken) {
+    return {
+      token: bigModelToken,
+      region: 'bigmodel',
+      providerName: 'BigModel',
+      usageURL: BIGMODEL_USAGE_URL,
+    };
+  }
+  const zaiToken = environment.Z_AI_API_KEY?.trim();
+  if (zaiToken) {
+    return {
+      token: zaiToken,
+      region: 'zai',
+      providerName: 'Z.ai',
+      usageURL: ZAI_USAGE_URL,
+    };
+  }
+  return null;
+}
 
 function integer(value) {
   return Number.isInteger(value) ? value : null;
@@ -80,35 +103,41 @@ export function parseZaiQuota(payload, now = new Date()) {
 export async function fetchZaiQuota({
   environment = process.env,
   fetchImpl = globalThis.fetch,
-  usageURL = USAGE_URL,
+  usageURL,
   now = new Date(),
   timeoutMs = 10_000,
 } = {}) {
-  const token = environment.Z_AI_API_KEY?.trim();
-  if (!token) {
+  const selected = credential(environment);
+  if (!selected) {
     return quotaResult({ id: PRODUCT_ID, status: 'missing_credentials',
-      message: 'Z.ai API key is not configured', fetchedAt: now });
+      message: 'ZCode API key is not configured', fetchedAt: now });
   }
+  const { token, region, providerName } = selected;
+  const endpoint = usageURL || selected.usageURL;
+  const cacheCredential = `${region}:${token}`;
   try {
-    const response = await fetchImpl(usageURL, {
+    const response = await fetchImpl(endpoint, {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status === 401 || response.status === 403) {
       return quotaResult({ id: PRODUCT_ID, status: 'unauthorized',
-        message: 'Z.ai rejected the API key', fetchedAt: now });
+        message: `${providerName} rejected the API key`, fetchedAt: now });
     }
     if (!response.ok) {
       return attachCacheScope(quotaResult({ id: PRODUCT_ID, status: 'retryable_error',
-        message: `Z.ai quota API returned HTTP ${response.status}`, fetchedAt: now }), token);
+        message: `${providerName} quota API returned HTTP ${response.status}`, fetchedAt: now }),
+      cacheCredential);
     }
     const { meters, planLabel } = parseZaiQuota(await response.json(), now);
     return attachCacheScope(quotaResult({ id: PRODUCT_ID, status: meters.length ? 'ok' : 'no_data',
-      meters, planLabel, fetchedAt: now, dataAsOf: now }), token);
+      meters, planLabel, fetchedAt: now, dataAsOf: now }), cacheCredential);
   } catch (error) {
     return attachCacheScope(quotaResult({ id: PRODUCT_ID, status: 'retryable_error',
-      message: error?.name === 'TimeoutError' ? 'Z.ai quota request timed out' : 'Z.ai quota request failed',
-      fetchedAt: now }), token);
+      message: error?.name === 'TimeoutError'
+        ? `${providerName} quota request timed out`
+        : `${providerName} quota request failed`,
+      fetchedAt: now }), cacheCredential);
   }
 }
