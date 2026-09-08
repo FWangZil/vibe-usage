@@ -3,12 +3,14 @@ export const QUOTA_SCHEMA_VERSION = 1;
 export const QUOTA_PRODUCT_IDS = Object.freeze([
   'kimi-code',
   'zcode',
-  'cursor-grok',
+  'grok',
+  'cursor',
 ]);
 
 export const FETCHABLE_QUOTA_PRODUCT_IDS = Object.freeze([
   'kimi-code',
   'zcode',
+  'grok',
 ]);
 
 const FETCH_STATUSES = new Set([

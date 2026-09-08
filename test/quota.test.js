@@ -22,6 +22,11 @@ import {
   kimiCredentialPath,
   parseKimiUsage,
 } from '../src/quotas/providers/kimi-code.js';
+import {
+  fetchGrokQuota,
+  grokBillingLogPath,
+  parseGrokBillingLog,
+} from '../src/quotas/providers/grok.js';
 import { fetchZaiQuota, parseZaiQuota } from '../src/quotas/providers/zai.js';
 
 function jsonResponse(payload, status = 200) {
@@ -74,10 +79,12 @@ const zaiPayload = {
   },
 };
 
-test('quota discovery uses presence signals and advertises Cursor as non-fetchable', () => {
+test('quota discovery detects Grok and Cursor independently', () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-quota-discovery-'));
   const bin = join(root, 'bin');
   mkdirSync(join(root, '.kimi-code'), { recursive: true });
+  mkdirSync(join(root, '.grok', 'logs'), { recursive: true });
+  mkdirSync(join(root, '.cursor'), { recursive: true });
   mkdirSync(bin);
   writeFileSync(join(bin, 'zcode'), '#!/bin/sh\n');
   chmodSync(join(bin, 'zcode'), 0o700);
@@ -91,11 +98,124 @@ test('quota discovery uses presence signals and advertises Cursor as non-fetchab
     assert.deepEqual(envelope.products, [
       { id: 'kimi-code', detected: true, fetchable: true },
       { id: 'zcode', detected: true, fetchable: true },
-      { id: 'cursor-grok', detected: false, fetchable: false },
+      { id: 'grok', detected: true, fetchable: true },
+      { id: 'cursor', detected: true, fetchable: false },
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('Grok parser selects the latest structured billing event and exposes only quota fields', () => {
+  const parsed = parseGrokBillingLog([
+    '{not-json',
+    JSON.stringify({ ts: '2026-09-08T00:00:00Z', msg: 'unrelated', ctx: { secret: 'nope' } }),
+    JSON.stringify({
+      ts: '2026-09-08T01:00:00Z',
+      msg: 'billing: fetched credits config',
+      ctx: {
+        config: {
+          creditUsagePercent: 12,
+          currentPeriod: {
+            type: 'USAGE_PERIOD_TYPE_WEEKLY',
+            start: '2026-09-07T00:00:00Z',
+            end: '2026-09-14T00:00:00Z',
+          },
+          accountId: 'must-not-be-returned',
+        },
+        subscriptionTier: 'X Premium+',
+        accessToken: 'must-not-be-returned',
+      },
+    }),
+    JSON.stringify({
+      ts: '2026-09-08T02:00:00Z',
+      msg: 'billing: fetched credits config',
+      ctx: {
+        config: {
+          creditUsagePercent: 30,
+          currentPeriod: {
+            type: 'USAGE_PERIOD_TYPE_WEEKLY',
+            start: '2026-09-07T00:00:00Z',
+            end: '2026-09-14T00:00:00Z',
+          },
+        },
+        subscriptionTier: 'X Premium+',
+      },
+    }),
+  ].join('\n'), new Date('2026-09-08T03:00:00Z'));
+
+  assert.deepEqual(parsed, {
+    active: true,
+    dataAsOf: new Date('2026-09-08T02:00:00Z'),
+    meters: [{
+      id: 'subscription-credits',
+      label: '7d',
+      utilization: 30,
+      resetsAt: '2026-09-14T00:00:00.000Z',
+      windowSeconds: 604_800,
+    }],
+    planLabel: 'X Premium+',
+  });
+  assert.equal(JSON.stringify(parsed).includes('must-not-be-returned'), false);
+});
+
+test('Grok fetch reads its official bounded local log without credentials or network', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-grok-quota-'));
+  const grokHome = join(root, 'custom-grok');
+  const logPath = join(grokHome, 'logs', 'unified.jsonl');
+  mkdirSync(join(grokHome, 'logs'), { recursive: true });
+  writeFileSync(logPath, `${JSON.stringify({
+    ts: '2026-09-08T02:00:00Z',
+    msg: 'billing: fetched credits config',
+    ctx: {
+      config: {
+        creditUsagePercent: 30,
+        currentPeriod: {
+          type: 'USAGE_PERIOD_TYPE_WEEKLY',
+          start: '2026-09-07T00:00:00Z',
+          end: '2026-09-14T00:00:00Z',
+        },
+      },
+      subscriptionTier: 'X Premium+',
+    },
+  })}\n`);
+  try {
+    const environment = { GROK_HOME: grokHome };
+    assert.equal(grokBillingLogPath(environment, root), logPath);
+    const result = fetchGrokQuota({
+      environment,
+      home: root,
+      now: new Date('2026-09-08T03:00:00Z'),
+    });
+    assert.equal(result.status, 'ok');
+    assert.equal(result.source, 'local');
+    assert.equal(result.planLabel, 'X Premium+');
+    assert.equal(result.meters[0].utilization, 30);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Grok fetch drops an expired billing period and handles a missing log quietly', () => {
+  const expired = parseGrokBillingLog(JSON.stringify({
+    ts: '2026-09-01T00:00:00Z',
+    msg: 'billing: fetched credits config',
+    ctx: { config: {
+      creditUsagePercent: 75,
+      currentPeriod: {
+        type: 'USAGE_PERIOD_TYPE_WEEKLY',
+        start: '2026-08-24T00:00:00Z',
+        end: '2026-08-31T00:00:00Z',
+      },
+    } },
+  }), new Date('2026-09-08T00:00:00Z'));
+  assert.equal(expired.active, false);
+
+  const missing = fetchGrokQuota({
+    environment: { GROK_HOME: '/definitely/missing/grok-home' },
+    now: new Date('2026-09-08T00:00:00Z'),
+  });
+  assert.equal(missing.status, 'no_data');
 });
 
 test('Kimi parser supports summary, detail.remaining, duration, and reset spellings', () => {

@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { loadCachedQuota, saveCachedQuota } from './cache.js';
+import { fetchGrokQuota } from './providers/grok.js';
 import { fetchKimiCodeQuota } from './providers/kimi-code.js';
 import { fetchZaiQuota } from './providers/zai.js';
 import { FETCHABLE_QUOTA_PRODUCT_IDS, quotaEnvelope, quotaResult } from './schema.js';
@@ -9,6 +10,7 @@ import { FETCHABLE_QUOTA_PRODUCT_IDS, quotaEnvelope, quotaResult } from './schem
 const providers = new Map([
   ['kimi-code', fetchKimiCodeQuota],
   ['zcode', fetchZaiQuota],
+  ['grok', fetchGrokQuota],
 ]);
 
 function executableExists(name, environment) {
@@ -31,6 +33,10 @@ export function discoverQuotaProducts({
   const applications = platform === 'darwin'
     ? ['/Applications', join(home, 'Applications')] : [];
   const existsAny = paths => paths.some(path => existsSync(path));
+  const configuredGrokHome = environment.GROK_HOME?.trim();
+  const grokHome = configuredGrokHome
+    ? configuredGrokHome.replace(/^~(?=$|[\\/])/, home)
+    : join(home, '.grok');
   return quotaEnvelope([
     {
       id: 'kimi-code',
@@ -46,7 +52,12 @@ export function discoverQuotaProducts({
       fetchable: true,
     },
     {
-      id: 'cursor-grok',
+      id: 'grok',
+      detected: existsAny([grokHome]) || executableExists('grok', environment),
+      fetchable: true,
+    },
+    {
+      id: 'cursor',
       detected: existsAny([join(home, '.cursor'),
         ...applications.map(path => join(path, 'Cursor.app'))])
         || executableExists('cursor', environment),
