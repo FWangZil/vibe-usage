@@ -13,16 +13,33 @@ const providers = new Map([
   ['grok', fetchGrokQuota],
 ]);
 
-function executableExists(name, environment) {
-  return (environment.PATH || '').split(delimiter).filter(Boolean).some(directory => {
-    const path = join(directory, name);
-    try {
-      accessSync(path, constants.X_OK);
-      return true;
-    } catch {
-      return false;
+function executableExists(name, environment, platform) {
+  const pathDelimiter = platform === 'win32' ? ';' : delimiter;
+  const candidateNames = [name];
+  if (platform === 'win32') {
+    const extensions = (environment.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+      .split(';')
+      .map(value => value.trim())
+      .filter(Boolean)
+      .map(value => value.startsWith('.') ? value : `.${value}`);
+    for (const extension of extensions) {
+      candidateNames.push(`${name}${extension}`, `${name}${extension.toLowerCase()}`);
     }
-  });
+  }
+
+  return (environment.PATH || '').split(pathDelimiter).filter(Boolean).some(directory => (
+    candidateNames.some(candidate => {
+      const path = join(directory, candidate);
+      try {
+        // Windows does not expose POSIX execute bits; file presence plus a
+        // PATHEXT executable suffix is its ordinary command-discovery rule.
+        accessSync(path, platform === 'win32' ? constants.F_OK : constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    })
+  ));
 }
 
 export function discoverQuotaProducts({
@@ -41,26 +58,26 @@ export function discoverQuotaProducts({
     {
       id: 'kimi-code',
       detected: existsAny([join(home, '.kimi'), join(home, '.kimi-code')])
-        || executableExists('kimi', environment),
+        || executableExists('kimi', environment, platform),
       fetchable: true,
     },
     {
       id: 'zcode',
       detected: existsAny([join(home, '.zcode'), join(home, '.config', 'zcode'),
         ...applications.map(path => join(path, 'ZCode.app'))])
-        || executableExists('zcode', environment),
+        || executableExists('zcode', environment, platform),
       fetchable: true,
     },
     {
       id: 'grok',
-      detected: existsAny([grokHome]) || executableExists('grok', environment),
+      detected: existsAny([grokHome]) || executableExists('grok', environment, platform),
       fetchable: true,
     },
     {
       id: 'cursor',
       detected: existsAny([join(home, '.cursor'),
         ...applications.map(path => join(path, 'Cursor.app'))])
-        || executableExists('cursor', environment),
+        || executableExists('cursor', environment, platform),
       fetchable: false,
     },
   ]);

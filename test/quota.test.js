@@ -106,6 +106,37 @@ test('quota discovery detects Grok and Cursor independently', () => {
   }
 });
 
+test('quota discovery follows Windows PATH and PATHEXT command rules', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-quota-windows-discovery-'));
+  const firstBin = join(root, 'first-bin');
+  const secondBin = join(root, 'second-bin');
+  mkdirSync(firstBin);
+  mkdirSync(secondBin);
+  writeFileSync(join(firstBin, 'kimi.CMD'), '');
+  writeFileSync(join(secondBin, 'zcode.exe'), '');
+  writeFileSync(join(secondBin, 'grok.BAT'), '');
+  writeFileSync(join(secondBin, 'cursor.com'), '');
+  try {
+    const envelope = discoverQuotaProducts({
+      environment: {
+        PATH: `${firstBin};${secondBin}`,
+        PATHEXT: '.COM;.EXE;.BAT;.CMD',
+        GROK_HOME: join(root, 'missing-grok-home'),
+      },
+      home: join(root, 'empty-home'),
+      platform: 'win32',
+    });
+    assert.deepEqual(envelope.products, [
+      { id: 'kimi-code', detected: true, fetchable: true },
+      { id: 'zcode', detected: true, fetchable: true },
+      { id: 'grok', detected: true, fetchable: true },
+      { id: 'cursor', detected: true, fetchable: false },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('Grok parser selects the latest structured billing event and exposes only quota fields', () => {
   const parsed = parseGrokBillingLog([
     '{not-json',
