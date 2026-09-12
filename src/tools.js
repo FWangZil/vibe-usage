@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { homedir } from 'node:os';
+import { getOpenCodeStores } from './opencode-roots.js';
 import { findClaudeCodeDataDirs } from './claude-roots.js';
 import { findCindyDataDirs, getCindyDataRoots } from './cindy-roots.js';
 import { codexSessionDirs, resolveCodexHomes } from './codex-roots.js';
@@ -11,8 +12,11 @@ import {
   grokSessionsDir,
 } from './extra-roots.js';
 import { findClineDataDirs } from './cline-roots.js';
+import { findColaDataDirs, getColaSessionsDir } from './cola-roots.js';
 import { findCraftDataDirs } from './craft-roots.js';
+import { findHermesDataDirs, getHermesHome } from './hermes-roots.js';
 import { findOmpDataDirs, findPiDataDirs } from './pi-roots.js';
+import { findQoderDataDirs, getQoderProjectsDir } from './qoder-roots.js';
 import { findWorkbuddyDataDirs } from './workbuddy-roots.js';
 
 export function getAlmaDbPath(env = process.env, platform = process.platform, home = homedir()) {
@@ -255,7 +259,7 @@ export const TOOLS = [
     name: 'Claude Code',
     id: 'claude-code',
     dataDir: join(homedir(), '.claude', 'projects'),
-    detectDataDirs: findClaudeCodeDataDirs,
+    detectDataDirs: ({ extraRoots } = {}) => findClaudeCodeDataDirs(extraRootList(extraRoots?.['claude-code'])),
   },
   {
     name: 'Codex CLI',
@@ -264,6 +268,12 @@ export const TOOLS = [
     detectDataDirs: ({ codexExtraHome, extraRoots } = {}) => (
       findCodexDataDirs(codexExtraHome, extraRootList(extraRoots?.codex))
     ),
+  },
+  {
+    name: 'Cola',
+    id: 'cola',
+    dataDir: getColaSessionsDir(),
+    detectDataDirs: findColaDataDirs,
   },
   {
     name: 'Grok',
@@ -302,6 +312,9 @@ export const TOOLS = [
     name: 'OpenCode',
     id: 'opencode',
     dataDir: join(homedir(), '.local', 'share', 'opencode'),
+    detectDataDirs: ({ extraRoots } = {}) => getOpenCodeStores({
+      extraRoots: extraRootList(extraRoots?.opencode),
+    }).map(store => store.path),
   },
   {
     name: 'OpenClaw',
@@ -322,6 +335,20 @@ export const TOOLS = [
     detectDataDirs: ({ extraRoots } = {}) => (
       findPiDataDirs(extraRootList(extraRoots?.['pi-coding-agent']))
     ),
+  },
+  {
+    name: 'Qoder',
+    id: 'qoder',
+    // CLI + desktop app transcripts; the IDE's SharedClientCache/cache/db/local.db
+    // is detected too. `~/.qoder` alone is not proof (the IDE stores extensions there).
+    dataDir: getQoderProjectsDir('qoder'),
+    detectDataDirs: () => findQoderDataDirs('qoder'),
+  },
+  {
+    name: 'Qoder CN',
+    id: 'qoder-cn',
+    dataDir: getQoderProjectsDir('qoder-cn'),
+    detectDataDirs: () => findQoderDataDirs('qoder-cn'),
   },
   {
     name: 'Qwen Code',
@@ -381,7 +408,8 @@ export const TOOLS = [
   {
     name: 'Hermes',
     id: 'hermes',
-    dataDir: join(homedir(), '.hermes', 'state.db'),
+    dataDir: join(getHermesHome(), 'state.db'),
+    detectDataDirs: findHermesDataDirs,
   },
   {
     name: 'Kiro',
