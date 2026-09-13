@@ -4,6 +4,7 @@ import { parse as parseCodex } from './codex.js';
 import { parse as parseCopilotCli } from './copilot-cli.js';
 import { parse as parseCraftAgent } from './craft-agent.js';
 import { parse as parseCursor } from './cursor.js';
+import { parse as parseDevin } from './devin.js';
 import { parse as parseDimAgent } from './dimagent.js';
 import { parse as parseRooCode } from './roo-code.js';
 import { parse as parseGeminiCli } from './gemini-cli.js';
@@ -37,6 +38,7 @@ export const parsers = {
   'copilot-cli': parseCopilotCli,
   'craft-agent': parseCraftAgent,
   'cursor': parseCursor,
+  'devin': parseDevin,
   'dimagent': parseDimAgent,
   'gemini-cli': parseGeminiCli,
   'opencode': parseOpencode,

@@ -24,6 +24,16 @@ const SKILL_TARGETS = [
     detectDir: join(homedir(), '.codeium', 'windsurf'),
     skillDir: join(homedir(), '.codeium', 'windsurf', 'skills', 'vibe-usage'),
   },
+  {
+    name: 'Devin',
+    // ~/.config/devin on macOS/Linux, %APPDATA%\devin on Windows.
+    detectDir: process.platform === 'win32'
+      ? join(process.env.APPDATA?.trim() || join(homedir(), 'AppData', 'Roaming'), 'devin')
+      : join(homedir(), '.config', 'devin'),
+    skillDir: process.platform === 'win32'
+      ? join(process.env.APPDATA?.trim() || join(homedir(), 'AppData', 'Roaming'), 'devin', 'skills', 'vibe-usage')
+      : join(homedir(), '.config', 'devin', 'skills', 'vibe-usage'),
+  },
 ];
 
 function tildePath(absPath) {

@@ -25,6 +25,7 @@ vibe-usage/
 │   │   ├── copilot-cli.js
 │   │   ├── sqlite.js          # queryDbJson() — node:sqlite (Node ≥22.5), falls back to sqlite3 CLI
 │   │   ├── cursor.js          # SQLite (read auth token) + cursor.com CSV export
+│   │   ├── devin.js           # Devin CLI/Desktop sessions.db (WAL snapshot); real per-call metrics, message_id dedupe
 │   │   ├── gemini-cli.js
 │   │   ├── opencode.js        # SQLite (via sqlite.js), legacy JSON fallback
 │   │   ├── openclaw.js
@@ -54,6 +55,7 @@ vibe-usage/
 │   ├── hermes-roots.js        # Shared Hermes CLI/Desktop home + profile discovery; Windows LOCALAPPDATA with legacy fallback
 │   ├── qoder-roots.js         # Qoder / Qoder CN edition table, CLI config dir + IDE data dir resolution, detection
 │   ├── workbuddy-roots.js     # WorkBuddy default and fixture/relocation roots
+│   ├── devin-roots.js         # Devin sessions.db discovery (XDG_DATA_HOME / %APPDATA%, VIBE_USAGE_DEVIN_DB)
 │   ├── tools.js               # TOOLS[] registry + detectInstalledTools()
 │   ├── sync.js                # Orchestrator: parse all → diff vs state → batch upload only new/changed
 │   ├── state.js               # ~/.vibe-usage/state.json: key→hash of uploaded items (incremental sync), clearState() for reset

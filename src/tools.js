@@ -18,6 +18,7 @@ import { findHermesDataDirs, getHermesHome } from './hermes-roots.js';
 import { findOmpDataDirs, findPiDataDirs } from './pi-roots.js';
 import { findQoderDataDirs, getQoderProjectsDir } from './qoder-roots.js';
 import { findWorkbuddyDataDirs } from './workbuddy-roots.js';
+import { findDevinDataDirs, getDevinDataDir } from './devin-roots.js';
 
 export function getAlmaDbPath(env = process.env, platform = process.platform, home = homedir()) {
   const pathImpl = platform === 'win32' ? win32 : posix;
@@ -296,6 +297,12 @@ export const TOOLS = [
     name: 'Cursor',
     id: 'cursor',
     dataDir: getCursorStateDbPath(),
+  },
+  {
+    name: 'Devin (Windsurf)',
+    id: 'devin',
+    dataDir: join(getDevinDataDir(), 'cli', 'sessions.db'),
+    detectDataDirs: findDevinDataDirs,
   },
   {
     name: 'DimAgent',
