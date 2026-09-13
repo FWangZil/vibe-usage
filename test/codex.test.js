@@ -803,7 +803,7 @@ test('configured Codex container with no task homes skips the source', async () 
 });
 
 test('unreadable directory inside a configured Codex home skips the source', {
-  skip: process.platform === 'win32',
+  skip: process.platform === 'win32' && 'POSIX chmod fixture: Windows requires a separate ACL denial test',
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-codex-unreadable-container-'));
   const primary = join(root, 'primary');
@@ -1260,7 +1260,8 @@ test('a segmented session matches an unsplit transcript, including timing, witho
 });
 
 test('an unreadable continuation suppresses partial Codex uploads', {
-  skip: process.platform === 'win32' || process.getuid?.() === 0,
+  skip: process.platform === 'win32' ? 'POSIX chmod fixture: Windows requires a separate ACL denial test'
+    : process.getuid?.() === 0 && 'POSIX root bypasses chmod denial; run as an unprivileged user',
 }, async () => {
   const t = '2026-09-06T00:00:00.000Z';
   const fixture = createPersistentFixture({

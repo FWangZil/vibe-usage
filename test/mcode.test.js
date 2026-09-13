@@ -52,7 +52,8 @@ test('mcode is registered and discovers env overrides', () => {
   assert.equal(typeof parsers.mcode, 'function');
   assert.equal(TOOLS.find(tool => tool.id === 'mcode')?.name, 'MiniMax Code');
   assert.equal(resolveMcodeDbPath({ VIBE_USAGE_MCODE_DB: '/tmp/mcode.db' }), '/tmp/mcode.db');
-  assert.equal(resolveMcodeDbPath({ MCODE_HOME: '/tmp/minimax' }), '/tmp/minimax/v2/sqlite/runtime-state.sqlite');
+  const home = join(tmpdir(), 'minimax');
+  assert.equal(resolveMcodeDbPath({ MCODE_HOME: home }), join(home, 'v2', 'sqlite', 'runtime-state.sqlite'));
 });
 
 test('mcode aggregates milliseconds, basename, cache and separate reasoning', async () => {

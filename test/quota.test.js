@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { assertPrivateCredentialFile, makePrivateWindowsFixtureDirectory } from '../test-support/file-permissions.js';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
@@ -8,7 +9,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -323,6 +323,7 @@ test('Kimi refreshes an expiring login, rotates it atomically, and keeps mode pr
   const oauthURL = 'https://auth.example.test/token';
   const usageURL = 'https://api.example.test/usages';
   mkdirSync(credentialDirectory, { recursive: true });
+  makePrivateWindowsFixtureDirectory(credentialDirectory);
   writeFileSync(credentialPath, JSON.stringify({
     access_token: 'expired-access-token',
     refresh_token: 'original-refresh-token',
@@ -366,7 +367,7 @@ test('Kimi refreshes an expiring login, rotates it atomically, and keeps mode pr
     assert.equal(persisted.access_token, 'fresh-access-token');
     assert.equal(persisted.refresh_token, 'rotated-refresh-token');
     assert.equal(persisted.expires_at, now.getTime() / 1000 + 900);
-    assert.equal(statSync(credentialPath).mode & 0o777, 0o600);
+    assertPrivateCredentialFile(credentialPath);
     assert.equal(readdirSync(credentialDirectory).some(name => name.includes('.tmp')), false);
     assert.equal(existsSync(`${credentialPath}.vibe-usage-refresh-lock`), false);
   } finally {

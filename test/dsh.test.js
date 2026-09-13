@@ -457,7 +457,7 @@ test('DSH returns empty when the sessions directory is missing', async () => {
   });
 });
 
-test('DSH marks nested project read failures as skipped', { skip: process.platform === 'win32' }, async (t) => {
+test('DSH marks nested project read failures as skipped', { skip: process.platform === 'win32' && 'POSIX chmod fixture: Windows requires a separate ACL denial test' }, async (t) => {
   await withDshSessions(async (sessions) => {
     writeSession(sessions, 'readable', 'session-readable', [
       sessionRecord('session-readable', '/home/me/readable'),

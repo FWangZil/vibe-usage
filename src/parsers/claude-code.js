@@ -342,6 +342,19 @@ export async function parse({ extraRoots = [] } = {}) {
   const roots = getClaudeRoots({
     onWarning: (message) => addWarning(ctx, message),
     extraRoots,
+  }).filter((root) => {
+    // On Windows readdir("file/projects") can return ENOENT rather than
+    // ENOTDIR. Validate the root first so that an invalid store cannot look
+    // like a successful empty scan and allow incremental state to be pruned.
+    try {
+      if (statSync(root).isDirectory()) return true;
+      addWarning(ctx, `Claude Code: cannot read directory ${root}: not a directory`);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        addWarning(ctx, `Claude Code: cannot read directory ${root}: ${err.message}`);
+      }
+    }
+    return false;
   });
   const projectGroups = collectCandidates(roots, 'projects', ctx);
   const projectSessionIds = new Set();

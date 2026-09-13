@@ -153,7 +153,8 @@ test('Cola ignores missing stores and malformed non-record values', async t => {
 });
 
 test('Cola suppresses partial results and protects state when a scope is unreadable', {
-  skip: process.platform === 'win32' || process.getuid?.() === 0,
+  skip: process.platform === 'win32' ? 'POSIX chmod fixture: Windows requires a separate ACL denial test'
+    : process.getuid?.() === 0 && 'POSIX root bypasses chmod denial; run as an unprivileged user',
 }, async t => {
   const { write, sessionsDir } = fixture(t);
   write('readable');

@@ -142,7 +142,8 @@ test('Hermes is absent when neither the default nor profile databases exist', as
 // reads. Windows ACLs do not implement chmod(0), so these cases run on POSIX.
 for (const location of ['home', 'profiles', 'profile']) {
   test(`Hermes rejects incomplete discovery when ${location} is unreadable`, {
-    skip: process.platform === 'win32' || process.getuid?.() === 0,
+    skip: process.platform === 'win32' ? 'POSIX chmod fixture: Windows requires a separate ACL denial test'
+    : process.getuid?.() === 0 && 'POSIX root bypasses chmod denial; run as an unprivileged user',
   }, async (t) => {
     const { userDir, writeDb, run } = await fixture(t);
     const home = join(userDir, '.hermes');
@@ -164,7 +165,8 @@ for (const location of ['home', 'profiles', 'profile']) {
 }
 
 test('Hermes does not fall back to legacy data when the Windows native root is unreadable', {
-  skip: process.platform === 'win32' || process.getuid?.() === 0,
+  skip: process.platform === 'win32' ? 'POSIX chmod fixture: Windows requires a separate ACL denial test'
+    : process.getuid?.() === 0 && 'POSIX root bypasses chmod denial; run as an unprivileged user',
 }, async (t) => {
   const { userDir, writeDb, run } = await fixture(t);
   await writeDb(join(userDir, '.hermes'));

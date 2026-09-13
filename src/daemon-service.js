@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { writeFileSync, readFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
-import { join, dirname, win32 as winPath } from 'node:path';
+import { join, win32 as winPath, posix as posixPath } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { success, failure, warn, dim } from './output.js';
@@ -41,8 +41,9 @@ export function isNpxCachePath(binPath) {
  * falls back to pinning the path and warning, as before).
  */
 export function npxLauncher(nodePath, exists = existsSync, os = platform()) {
-  const nodeDir = dirname(nodePath);
-  const npxPath = join(nodeDir, os === 'win32' ? 'npx.cmd' : 'npx');
+  const paths = os === 'win32' ? winPath : posixPath;
+  const nodeDir = paths.dirname(nodePath);
+  const npxPath = paths.join(nodeDir, os === 'win32' ? 'npx.cmd' : 'npx');
   return exists(npxPath) ? { mode: 'npx', npxPath, nodeDir } : null;
 }
 

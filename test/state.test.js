@@ -64,7 +64,7 @@ test('pruneState keeps keys of sources whose parser failed this run', () => {
   assert.deepEqual(state, { buckets: { 'kiro|m|p|h|t': 'y' }, sessions: {} });
 });
 
-test('saveConfig writes the API key file readable only by the owner', { skip: process.platform === 'win32' }, () => {
+test('saveConfig writes the API key file readable only by the owner', { skip: process.platform === 'win32' && 'POSIX owner/mode assertion; Windows config ACL privacy is not covered by this test' }, () => {
   saveConfig({ apiKey: 'vbu_secret' });
   const mode = statSync(getConfigPath()).mode & 0o777;
   assert.equal(mode, 0o600);

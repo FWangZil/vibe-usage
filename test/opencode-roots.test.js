@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { withUnreadableFile } from '../test-support/file-permissions.js';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -126,13 +127,14 @@ test('OpenCode does not rename existing unknown-project buckets from cwd metadat
   assert.equal((await parse()).buckets[0].project, 'unknown');
 }));
 
-test('unreadable OpenCode database protects the source state', { skip: process.getuid?.() === 0 }, async () => fixture(async (root, primary) => {
+test('unreadable OpenCode database protects the source state', {
+  skip: process.getuid?.() === 0 && 'POSIX root bypasses chmod denial; run as an unprivileged user',
+}, async () => fixture(async (root, primary) => {
   sqlite(primary, rows()); const path = join(primary, 'opencode.db');
-  chmodSync(path, 0);
-  try {
+  await withUnreadableFile(path, async () => {
     const result = await parse();
     assert.equal(result.skipped, true);
     assert.ok(result.warnings.length);
     assert.deepEqual(result.buckets, []);
-  } finally { chmodSync(path, 0o600); }
+  });
 }));

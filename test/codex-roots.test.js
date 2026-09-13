@@ -46,9 +46,10 @@ test('resolveCodexHomes expands, adds, and de-duplicates an extra root', () => {
 });
 
 test('codexSessionDirs includes live and archived session directories', () => {
-  assert.deepEqual(codexSessionDirs('/tmp/codex-root'), [
-    '/tmp/codex-root/sessions',
-    '/tmp/codex-root/archived_sessions',
+  const root = join(tmpdir(), 'codex-root');
+  assert.deepEqual(codexSessionDirs(root), [
+    join(root, 'sessions'),
+    join(root, 'archived_sessions'),
   ]);
 });
 

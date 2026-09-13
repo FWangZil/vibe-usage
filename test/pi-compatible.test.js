@@ -160,8 +160,11 @@ test('OMP discovers XDG profiles and does not also label its agent store as Pi',
     process.env.PI_CODING_AGENT_DIR = ompAgent;
 
     const ompDirs = getOmpSessionDirs();
-    assert.ok(ompDirs.includes(xdgSession));
-    assert.ok(ompDirs.includes(xdgProfile));
+    // OMP's automatic XDG migration is a Linux/macOS feature. Explicit
+    // agent/session overrides remain supported on Windows as well.
+    const supportsXdg = process.platform === 'linux' || process.platform === 'darwin';
+    assert.equal(ompDirs.includes(xdgSession), supportsXdg);
+    assert.equal(ompDirs.includes(xdgProfile), supportsXdg);
     assert.ok(ompDirs.includes(overriddenSession));
     assert.deepEqual(getPiSessionDirs(), []);
     // The OMP guard suppresses discovery of an OMP store as Pi; it must not
@@ -545,7 +548,7 @@ test('Pi scans a whole container even when one task store is named sessions/', a
 // as "this subtree holds no sessions", which re-ran the container-vs-agent-home
 // decision on false evidence.
 test('Pi skips a container whose sibling store is temporarily unreadable', {
-  skip: process.platform === 'win32',
+  skip: process.platform === 'win32' && 'POSIX chmod fixture: Windows requires a separate ACL denial test',
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-pi-extra-root-unreadable-'));
   const previous = Object.fromEntries([

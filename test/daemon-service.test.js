@@ -194,8 +194,8 @@ test('npxLauncher only engages when npx sits next to the running node', () => {
   assert.deepEqual(found, { mode: 'npx', npxPath: '/opt/homebrew/bin/npx', nodeDir: '/opt/homebrew/bin' });
   assert.equal(npxLauncher('/opt/homebrew/bin/node', () => false, 'darwin'), null);
   const win = npxLauncher('C:\\nodejs\\node.exe', p => p.endsWith('npx.cmd'), 'win32');
-  assert.equal(win.mode, 'npx');
-  assert.match(win.npxPath, /npx\.cmd$/);
+  assert.deepEqual(win, { mode: 'npx', nodeDir: 'C:\\nodejs', npxPath: 'C:\\nodejs\\npx.cmd' });
+  assert.equal(npxLauncher('C:\\nodejs\\node.exe', () => false, 'win32'), null);
 });
 
 const NPX_LAUNCHER = { mode: 'npx', npxPath: '/opt/homebrew/bin/npx', nodeDir: '/opt/homebrew/bin' };

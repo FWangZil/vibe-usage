@@ -37,17 +37,20 @@ test('MiMoCode is registered as a parser and detected tool', () => {
 });
 
 test('resolveMimocodeDbPath follows MiMoCode environment precedence', () => {
+  const home = join(tmpdir(), 'mimo-home');
+  const custom = join(tmpdir(), 'custom.db');
+  const xdg = join(tmpdir(), 'xdg-data');
   assert.equal(resolveMimocodeDbPath({
-    MIMOCODE_HOME: '/tmp/mimo-home',
+    MIMOCODE_HOME: home,
     MIMOCODE_DB: 'channel.db',
-  }), '/tmp/mimo-home/data/channel.db');
+  }), join(home, 'data', 'channel.db'));
   assert.equal(resolveMimocodeDbPath({
-    MIMOCODE_HOME: '/tmp/mimo-home',
-    MIMOCODE_DB: '/tmp/custom.db',
-  }), '/tmp/custom.db');
+    MIMOCODE_HOME: home,
+    MIMOCODE_DB: custom,
+  }), custom);
   assert.equal(resolveMimocodeDbPath({
-    XDG_DATA_HOME: '/tmp/xdg-data',
-  }), '/tmp/xdg-data/mimocode/mimocode.db');
+    XDG_DATA_HOME: xdg,
+  }), join(xdg, 'mimocode', 'mimocode.db'));
 });
 
 test('parse reads exact token usage and session timing from MiMoCode SQLite', async () => {
