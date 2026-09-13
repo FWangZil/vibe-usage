@@ -13,7 +13,13 @@ function assertTemporary(path) {
 
 function windowsAcl(path, script, extra = {}) {
   assertTemporary(path);
-  const code = `$ErrorActionPreference = 'Stop'\n${script}`;
+  // The host may be PowerShell 7 while this executable is Windows PowerShell
+  // 5. Its inherited PSModulePath must not load PS7 Security assemblies.
+  // Restrict only this disposable child to its own inbox modules.
+  const code = `$ErrorActionPreference = 'Stop'
+$env:PSModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules')
+Import-Module ([System.IO.Path]::Combine($PSHOME, 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1')) -ErrorAction Stop
+${script}`;
   return execFileSync('powershell.exe', [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-EncodedCommand', Buffer.from(code, 'utf16le').toString('base64'),

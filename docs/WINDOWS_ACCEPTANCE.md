@@ -1,9 +1,21 @@
 # Windows acceptance fixes
 
+Update after native retest (2026-09-13): CLI `5387113efc20` and the actual
+vendored snapshot achieved **377 total / 367 pass / 0 fail / 10 explained
+skips** on Windows Node 22.23.1. All eight original failures ran and passed,
+including the OpenCode/Kimi ACL tests. The original FAIL below remains history.
+Initial ACL attempts failed when a PowerShell 7 host injected its module path
+into Windows PowerShell 5; restoring the standard path made the suite pass.
+The new `0.10.32-windows-acceptance.2` test helper now selects `$PSHOME/Modules`
+and imports the inbox Security module explicitly inside the child process.
+No caller/global environment, product runtime policy or assertions are changed.
+Re-run the suite under the original polluted host without manually fixing
+PSModulePath; that environmental robustness change still needs native retest.
+
 Baseline: CLI `4ab7b98e3e6c6a6e5efcd4ac9315ff03f5adbd1d`, version
 `0.10.32`; Windows Node 22 reported **377 total / 359 pass / 8 fail / 10 skip**.
 That remains a failed native baseline. macOS results do not replace it.
-This branch uses the unpublished `0.10.32-windows-acceptance.1` identity.
+This branch uses the unpublished `0.10.32-windows-acceptance.2` identity.
 
 ## Eight failing cases
 
