@@ -10,6 +10,7 @@ import {
 } from './extra-roots.js';
 import { dim as dimText, failure, hint, smallHeader, warn } from './output.js';
 import { fetchAccount } from './api.js';
+import { COLLECTOR_VERSION } from './client-meta.js';
 
 function printSmallHeader() {
   console.log();
@@ -276,6 +277,7 @@ const FULL_HELP = `
     ${BARE} config roots  Show added data roots as JSON
     ${BARE} help         Show the short help
     ${BARE} help --all   Show this full list
+    ${BARE} --version    Print the installed CLI version
 `;
 
 export async function run(rawArgs) {
@@ -376,6 +378,11 @@ export async function run(rawArgs) {
     }
     case 'config': {
       handleConfig(args.slice(1));
+      break;
+    }
+    case '--version':
+    case '-v': {
+      console.log(COLLECTOR_VERSION);
       break;
     }
     case 'status': {

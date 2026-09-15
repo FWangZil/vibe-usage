@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -24,6 +24,26 @@ test('unknown top-level command fails instead of falling through to init or sync
   const result = run('definitely-not-a-command');
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Unknown command: definitely-not-a-command/);
+});
+
+test('--version and -v print the installed package version without side effects', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-cli-version-'));
+  const configPath = join(root, 'config.json');
+  const expected = JSON.parse(
+    readFileSync(join(testDir, '..', 'package.json'), 'utf8'),
+  ).version;
+
+  try {
+    for (const flag of ['--version', '-v']) {
+      const result = runWithEnv([flag], { VIBE_USAGE_CONFIG_DIR: root });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, '');
+      assert.equal(result.stdout, `${expected}\n`);
+      assert.equal(existsSync(configPath), false);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('quota discover prints a versioned JSON-only contract', () => {
