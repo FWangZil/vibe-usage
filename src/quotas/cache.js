@@ -16,11 +16,15 @@ function cachePath(environment = process.env) {
 function loadDocument(environment) {
   try {
     const parsed = JSON.parse(readFileSync(cachePath(environment), 'utf8'));
-    if (!parsed || parsed.version !== CACHE_VERSION || typeof parsed.products !== 'object') return null;
+    if (!isRecord(parsed) || parsed.version !== CACHE_VERSION || !isRecord(parsed.products)) return null;
     return parsed;
   } catch {
     return null;
   }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function attachCacheScope(result, secret) {
@@ -62,18 +66,20 @@ export function loadCachedQuota(id, scope, environment = process.env, now = new 
 
 export function saveCachedQuota(result, scope, environment = process.env) {
   if (result?.status !== 'ok' || !scope) return;
-  const path = cachePath(environment);
-  const document = loadDocument(environment) || { version: CACHE_VERSION, products: {} };
-  document.products[result.id] = {
-    id: result.id,
-    status: 'ok',
-    meters: result.meters,
-    planLabel: result.planLabel,
-    fetchedAt: result.fetchedAt,
-    dataAsOf: result.dataAsOf,
-    scope,
-  };
   try {
+    // All disposable-cache work belongs inside the failure boundary, including
+    // path resolution and updating a document recovered from disk.
+    const path = cachePath(environment);
+    const document = loadDocument(environment) || { version: CACHE_VERSION, products: {} };
+    document.products[result.id] = {
+      id: result.id,
+      status: 'ok',
+      meters: result.meters,
+      planLabel: result.planLabel,
+      fetchedAt: result.fetchedAt,
+      dataAsOf: result.dataAsOf,
+      scope,
+    };
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${process.pid}.tmp`;
     writeFileSync(temporary, `${JSON.stringify(document)}\n`, { encoding: 'utf8', mode: 0o600 });
