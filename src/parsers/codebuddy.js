@@ -56,6 +56,22 @@ function findTranscripts(root, onWarning) {
   return { projectsDir, files };
 }
 
+/**
+ * Provider routing/tier labels ('auto', 'default', …) are not model ids, and
+ * server-side pricing matches the model string alone: a bare `auto` would be
+ * billed at Cursor's `auto` rate — the collision PR #83 fixed for Qoder by
+ * renaming it `qoder-auto`. Namespace the tier labels with the tool prefix;
+ * concrete ids (`claude-sonnet-4-6`, …) pass through untouched.
+ */
+const ROUTING_TIER_IDS = new Set([
+  'auto', 'default', 'default-model', 'fast', 'turbo', 'lite', 'ultimate', 'performance', 'efficient',
+]);
+
+function normalizeModel(model) {
+  const lower = model.toLowerCase();
+  return ROUTING_TIER_IDS.has(lower) ? `${SOURCE}-${lower}` : model;
+}
+
 /** One usage-bearing assistant message, keyed so retries/copies collapse. */
 function usageEntry(obj, projectFallback, sessionId) {
   const usage = obj.message?.usage;
@@ -80,11 +96,11 @@ function usageEntry(obj, projectFallback, sessionId) {
   const identity = messageId || providerMessageId || ownId;
   const dedupeKey = identity ? `call:${identity}` : null;
 
-  const model = [
+  const model = normalizeModel([
     obj.message?.model,
     obj.providerData?.requestModelId,
     obj.providerData?.model,
-  ].find(value => typeof value === 'string' && value.trim()) || 'unknown';
+  ].find(value => typeof value === 'string' && value.trim()) || 'unknown');
 
   return {
     dedupeKey,

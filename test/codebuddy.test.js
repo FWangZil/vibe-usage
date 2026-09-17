@@ -113,6 +113,24 @@ test('codebuddy collapses a retried/copied call onto its most complete payload',
   assert.equal(result.buckets[0].inputTokens, 110, 'the zeroed copy must not win');
 }));
 
+test('codebuddy namespaces routing tiers so they cannot match another vendor price', async () => fixture(async root => {
+  // `auto` is priced as Cursor's auto (input 1.25 / output 6) — a bare tier label
+  // must never be billed at another product's rate (the Qoder #83 bug).
+  const tiered = assistantRecord({
+    id: 'tier-1',
+    message: { ...assistantRecord().message, model: null },
+    providerData: { ...assistantRecord().providerData, messageId: 'tier-msg', model: 'Auto', requestModelId: 'auto', requestModelName: 'Auto' },
+  });
+  const concrete = assistantRecord({
+    id: 'tier-2',
+    providerData: { ...assistantRecord().providerData, messageId: 'concrete-msg', requestModelId: 'claude-sonnet-4-6' },
+  });
+  writeTranscript(root, 'private-work-demo-project', 'session-1', [userRecord, tiered, concrete]);
+
+  const models = (await parse()).buckets.map(bucket => bucket.model).sort();
+  assert.deepEqual(models, ['claude-sonnet-4-6', 'codebuddy-auto'], 'tier namespaced, real model untouched');
+}));
+
 test('codebuddy counts every distinct call, including records with no id at all', async () => fixture(async root => {
   // Regression: the real record has no `message.id`, so a dedup key built from it
   // alone is empty and collapses the whole session onto one call.
