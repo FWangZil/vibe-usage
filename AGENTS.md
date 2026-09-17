@@ -32,7 +32,7 @@ vibe-usage/
 │   │   ├── pi-session-jsonl.js # Shared Pi/CraftAgent/OMP reader + copied-record dedup
 │   │   ├── craft-agent.js
 │   │   ├── qwen-code.js
-│   │   ├── kimi-code.js          # Both stores parsed+merged: ~/.kimi-code (root via $KIMI_CODE_HOME) + legacy ~/.kimi
+│   │   ├── kimi-code.js          # Every Kimi Code home merged: CLI ($KIMI_CODE_HOME / ~/.kimi-code) + Kimi Work desktop + legacy ~/.kimi
 │   │   ├── amp.js
 │   │   ├── droid.js
 │   │   ├── dsh.js              # DeepSeek Harness multi-frame zstd session logs
@@ -51,6 +51,7 @@ vibe-usage/
 │   ├── cola-roots.js          # Cola sessions discovery, including COLA_DATA_DIR
 │   ├── cindy-roots.js          # Cindy Global/CN Electron roots + per-owner DB discovery
 │   ├── craft-roots.js         # CraftAgent root resolution and detection
+│   ├── kimi-roots.js          # Kimi Code CLI home ($KIMI_CODE_HOME / ~/.kimi-code) + Kimi Work desktop embedded home; additive, de-duplicated roots
 │   ├── hermes-roots.js        # Shared Hermes CLI/Desktop home + profile discovery; Windows LOCALAPPDATA with legacy fallback
 │   ├── qoder-roots.js         # Qoder / Qoder CN edition table, CLI config dir + IDE data dir resolution, detection
 │   ├── workbuddy-roots.js     # WorkBuddy default and fixture/relocation roots
@@ -234,7 +235,7 @@ Qoder parsers (`qoder.js`, two editions via `../qoder-roots.js`):
 - `~/.qoder` alone does not mean the CLI is installed (the IDE's `dataFolderName` is `.qoder` too); detection checks `projects/` or the IDE db.
 
 Cline (`cline.js`, `cline-sdk.js`, `cline-roots.js`):
-- Cline CLI 3.0.61 / core 0.0.82 writes per-call metrics to `~/.cline/data/sessions/<id>/*.messages.json`; `data/db/sessions.db` is only an index and is not needed for accounting. Read the adjacent version-1 `<id>.json` manifest for project/model fallback. Include child-agent artifacts in that same session directory. Keep old standalone and editor `state/taskHistory.json` + `tasks/<id>/ui_messages.json` stores, including the legacy `~/.cline/data` layout. Honor `CLINE_DIR`, `CLINE_DATA_DIR`, and `CLINE_SESSION_DATA_DIR`; `VIBE_USAGE_CLINE_DIRS` replaces all machine discovery for fixtures.
+- Cline CLI 3.0.61 / core 0.0.82 and the Cline desktop app (0.0.28) write the same per-call metrics to `~/.cline/data/sessions/<id>/*.messages.json`; the desktop manifest carries `source: "desktop"` + `metadata.sessionHistoryOrigin`, its Electron userData holds no usage, and its user messages have no `metadata` (still human prompts). `data/db/sessions.db` is only an index and is not needed for accounting. Read the adjacent version-1 `<id>.json` manifest for project/model fallback. Include child-agent artifacts in that same session directory. Keep old standalone and editor `state/taskHistory.json` + `tasks/<id>/ui_messages.json` stores, including the legacy `~/.cline/data` layout. Honor `CLINE_DIR`, `CLINE_DATA_DIR`, and `CLINE_SESSION_DATA_DIR`; `VIBE_USAGE_CLINE_DIRS` replaces all machine discovery for fixtures.
 - SDK `metrics.inputTokens` already includes cache reads and writes: subtract `cacheReadTokens` once into `cachedInputTokens`, leaving cache writes in ordinary input. `outputTokens` is already the full output; the persisted metrics have no separate reasoning field. Never read stored cost as the estimated price. Legacy `tokensIn` is uncached input, so its existing cache-write addition stays unchanged.
 - SDK assistant message ids and timestamps identify copied history; keep the richest metrics, with deterministic attribution to the earliest original session. Anonymous messages are scoped to the artifact/session and position. Preserve the existing legacy task-copy selection and upload session ids. Ignore child-agent prompts, tool results, and synthetic user events when counting human turns. Legacy-to-SDK migration can attach cumulative usage to an old assistant without a timestamp: skip that record instead of assigning it the migration time; the legacy store retains the original accounting.
 - Read canonical `.messages.json` artifacts only, not compaction sidecars or backups. Reduce parsed records to token/model/timing fields; do not retain or upload message content, system prompts, provider credentials, or costs. Unreadable, corrupt, or unsupported SDK artifacts return `skipped` with warnings so earlier upload state is preserved. Regression coverage: `test/cline.test.js` and `test/cline-sdk.test.js`.

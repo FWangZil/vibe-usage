@@ -145,3 +145,44 @@ test('SDK discovery honors CLINE_DATA_DIR without requiring a diagnostic overrid
     'import { findClineDataDirs } from "./src/cline-roots.js"; console.log(JSON.stringify(findClineDataDirs()))'], { cwd: new URL('..', import.meta.url), env, encoding: 'utf8' }));
   assert.ok(result.includes(join(root, 'data', 'sessions')));
 }));
+
+// Shape read off Cline desktop 0.0.28: same artifacts as the CLI/SDK, but the
+// manifest says `source: "desktop"` (plus `metadata.sessionHistoryOrigin`) and
+// desktop user messages carry no `metadata` at all — they are still human turns.
+test('Cline desktop app artifacts are read as ordinary cline usage', async () => fixture(async root => {
+  const id = 'session_desktop_1';
+  writeSession(root, id, [
+    { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], ts: start },
+    { id: 'm2', role: 'assistant', modelInfo: { id: 'deepseek-v4-flash' },
+      metrics: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 0 },
+      ts: start + 1000 },
+  ], {
+    manifest: {
+      source: 'desktop',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      cwd: '/work/desktop-project',
+      workspace_root: '/work/desktop-project',
+      metadata: {
+        sessionHistoryOrigin: { mode: 'user', version: '0.0.27' },
+        source: 'desktop',
+        usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 0 },
+      },
+      messages_path: join(root, 'data', 'sessions', id, `${id}.messages.json`),
+    },
+    payload: {
+      origin: { source: 'desktop', mode: 'user', sessionId: id, version: '0.0.27' },
+    },
+  });
+  const result = await parse();
+  assert.equal(result.skipped, undefined);
+  assert.equal(result.buckets.length, 1);
+  const bucket = result.buckets[0];
+  assert.equal(bucket.project, 'desktop-project');
+  assert.equal(bucket.model, 'deepseek-v4-flash');
+  assert.equal(bucket.inputTokens, 600); // metrics.inputTokens includes the cache read
+  assert.equal(bucket.cachedInputTokens, 400);
+  assert.equal(bucket.outputTokens, 100);
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].userMessageCount, 1);
+}));

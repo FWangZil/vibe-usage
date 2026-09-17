@@ -1,8 +1,9 @@
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { aggregateToBuckets, extractSessions } from './aggregate.js';
+import { resolveKimiCodeRoots } from '../kimi-roots.js';
 
 /**
  * Kimi Code CLI parser. MoonshotAI/kimi-cli (a.k.a. "Kimi Code").
@@ -19,8 +20,13 @@ import { aggregateToBuckets, extractSessions } from './aggregate.js';
  *    sum to the session total. The model name rides on each record — no config
  *    lookup needed. User turns are `turn.prompt` with origin.kind === "user".
  *    The real working directory per session is recorded in
- *      ~/.kimi-code/session_index.jsonl  -> {sessionId, sessionDir, workDir}
+ *      <home>/session_index.jsonl  -> {sessionId, sessionDir, workDir}
  *    which gives an accurate project name (last path component of workDir).
+ *    Several homes share this layout and are all scanned (see kimi-roots.js):
+ *    the CLI home ($KIMI_CODE_HOME, else ~/.kimi-code) and the Kimi Work
+ *    desktop app's embedded runtime home. The desktop app never writes into the
+ *    CLI home, so the stores are independent and merging them cannot
+ *    double-count.
  *
  * 2. Legacy ("~/.kimi", protocol 1.1 / 1.9). Sessions live at
  *      ~/.kimi/sessions/<md5(workdir)>/<session-id>/wire.jsonl
@@ -39,15 +45,12 @@ import { aggregateToBuckets, extractSessions } from './aggregate.js';
 // Current format: ~/.kimi-code
 // ---------------------------------------------------------------------------
 
-// VIBE_USAGE_KIMI_CODE_DIR overrides the root (test hook). Otherwise resolve
-// the data root the same way the CLI itself does: $KIMI_CODE_HOME, then
-// ~/.kimi-code. Ignoring KIMI_CODE_HOME means users with a custom home get
-// zero usage parsed.
-const KIMI_CODE_DIR = process.env.VIBE_USAGE_KIMI_CODE_DIR?.trim()
-  || process.env.KIMI_CODE_HOME?.trim()
-  || join(homedir(), '.kimi-code');
-const KIMI_CODE_SESSIONS_DIR = join(KIMI_CODE_DIR, 'sessions');
-const KIMI_CODE_SESSION_INDEX = join(KIMI_CODE_DIR, 'session_index.jsonl');
+// VIBE_USAGE_KIMI_CODE_DIR overrides the root (test hook). Otherwise every root
+// from kimi-roots.js is scanned — the CLI home resolved the same way the CLI
+// itself resolves it ($KIMI_CODE_HOME, then ~/.kimi-code) plus the Kimi Work
+// desktop app's embedded runtime home (issue #85), which uses this exact
+// layout. Ignoring KIMI_CODE_HOME means users with a custom home get zero usage
+// parsed; ignoring the desktop home means Kimi Work users get zero usage parsed.
 
 function projectNameFromPath(path) {
   if (typeof path !== 'string' || !path) return null;
@@ -55,17 +58,17 @@ function projectNameFromPath(path) {
 }
 
 /**
- * Map each session directory (absolute path) to a project name, read from
- * ~/.kimi-code/session_index.jsonl. Falls back gracefully if the file is
- * missing or malformed — callers default to the wd_ bucket name.
+ * Map each session directory (absolute path) to a project name, read from the
+ * home's session_index.jsonl. Falls back gracefully if the file is missing or
+ * malformed — callers default to the wd_ bucket name.
  */
-function loadSessionIndex() {
+function loadSessionIndex(indexPath) {
   const map = new Map();
-  if (!existsSync(KIMI_CODE_SESSION_INDEX)) return map;
+  if (!existsSync(indexPath)) return map;
 
   let content;
   try {
-    content = readFileSync(KIMI_CODE_SESSION_INDEX, 'utf-8');
+    content = readFileSync(indexPath, 'utf-8');
   } catch {
     return map;
   }
@@ -141,23 +144,41 @@ function findKimiCodeWireFiles(baseDir) {
   return results;
 }
 
+/**
+ * Every wire file to parse, with its project name, across all Kimi Code homes.
+ * Two roots can resolve to the same store (symlink, relocated home), so the
+ * same physical wire file is returned once.
+ */
+function findKimiCodeWireFilesInAllRoots() {
+  const results = [];
+  const seen = new Set();
+  for (const root of resolveKimiCodeRoots()) {
+    const sessionIndex = loadSessionIndex(join(root, 'session_index.jsonl'));
+    for (const { wireFile, sessionDir, bucketProject } of findKimiCodeWireFiles(join(root, 'sessions'))) {
+      let identity = wireFile;
+      try { identity = realpathSync(wireFile); } catch { /* keep the literal path */ }
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      results.push({ wireFile, sessionDir, project: sessionIndex.get(sessionDir) || bucketProject || 'unknown' });
+    }
+  }
+  return results;
+}
+
 function parseKimiCode() {
-  const wireFiles = findKimiCodeWireFiles(KIMI_CODE_SESSIONS_DIR);
+  const wireFiles = findKimiCodeWireFilesInAllRoots();
   if (wireFiles.length === 0) return null;
 
-  const sessionIndex = loadSessionIndex();
   const entries = [];
   const sessionEvents = [];
 
-  for (const { wireFile, sessionDir, bucketProject } of wireFiles) {
+  for (const { wireFile, sessionDir, project } of wireFiles) {
     let content;
     try {
       content = readFileSync(wireFile, 'utf-8');
     } catch {
       continue;
     }
-
-    const project = sessionIndex.get(sessionDir) || bucketProject || 'unknown';
 
     for (const line of content.split('\n')) {
       if (!line.trim()) continue;
