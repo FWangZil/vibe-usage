@@ -204,6 +204,38 @@ test('status displays the persisted extra Codex home and detects Codex there', (
   }
 });
 
+test('status separates "detected but never uploaded" from a syncing tool', () => {
+  const root = mkdtempSync(join(tmpdir(), 'vibe-usage-cli-status-uploaded-'));
+  const configDir = join(root, 'config');
+  const stateDir = join(root, 'state');
+  const home = join(root, 'home');
+  mkdirSync(join(home, '.kimi-code', 'sessions'), { recursive: true });
+  mkdirSync(join(home, '.cola', 'sessions'), { recursive: true });
+  mkdirSync(configDir, { recursive: true });
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(configDir, 'config.json'), JSON.stringify({ apiKey: 'vbu_test', apiUrl: 'http://127.0.0.1:1' }));
+  // One uploaded kimi-code bucket, nothing for the other detected tools.
+  writeFileSync(join(stateDir, 'state.json'), JSON.stringify({
+    buckets: { 'kimi-code|k3|proj|device|2026-09-17T00:00:00.000Z': 'hash' },
+    sessions: { 'kimi-code|abc': 'hash' },
+  }));
+  try {
+    const result = runWithEnv(['status'], {
+      HOME: home,
+      XDG_DATA_HOME: join(home, 'data'),
+      APPDATA: join(home, 'appdata'),
+      VIBE_USAGE_CONFIG_DIR: configDir,
+      VIBE_USAGE_STATE_DIR: stateDir,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Kimi Code {2}· {2}已上传 1 buckets \/ 1 sessions/);
+    assert.match(result.stdout, /Cola {2}· {2}尚未上传过数据/);
+    assert.match(result.stdout, /本机检测到数据，但本地没有这条工具的上传记录/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('config add-root, roots, and remove-root manage tool-specific roots without touching legacy config', () => {
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-cli-roots-'));
   const configDir = join(root, 'config');

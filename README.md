@@ -50,7 +50,7 @@ npx @vibe-cafe/vibe-usage reset        # Delete all data and re-upload from loca
 npx @vibe-cafe/vibe-usage reset --local  # Delete this host's data only and re-upload (`--host` remains a legacy alias)
 npx @vibe-cafe/vibe-usage skill         # Install skill for AI coding assistants
 npx @vibe-cafe/vibe-usage skill --remove  # Remove installed skills
-npx @vibe-cafe/vibe-usage status       # Show config & detected tools
+npx @vibe-cafe/vibe-usage status       # Config, detected tools, and what each tool has uploaded so far
 npx @vibe-cafe/vibe-usage help --all   # Full help (plain `help` shows the short version)
 ```
 

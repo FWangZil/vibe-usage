@@ -38,7 +38,7 @@ Other available commands:
 | Command | Description |
 |---------|-------------|
 | `npx @vibe-cafe/vibe-usage sync` | Sync latest usage data |
-| `npx @vibe-cafe/vibe-usage status` | Show config and detected tools |
+| `npx @vibe-cafe/vibe-usage status` | Show config, detected tools, and how much each tool has uploaded |
 | `npx @vibe-cafe/vibe-usage daemon status` | Check the background sync service (installed by first run) |
 | `npx @vibe-cafe/vibe-usage reset` | Delete all data and re-upload |
 | `npx @vibe-cafe/vibe-usage reset --local` | Delete this host's data and re-upload |
