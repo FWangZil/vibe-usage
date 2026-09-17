@@ -77,15 +77,20 @@ test('Kimi Work desktop sessions are parsed and merged with the CLI home', () =>
   const root = mkdtempSync(join(tmpdir(), 'vibe-usage-kimi-desktop-'));
   const fakeHome = join(root, 'home');
   const cliHome = join(root, 'cli-home');
-  const desktopHome = kimiWorkCodeHome({}, process.platform, fakeHome);
+  const env = { ...process.env, HOME: fakeHome, KIMI_CODE_HOME: cliHome };
+  delete env.VIBE_USAGE_KIMI_CODE_DIR;
+  // Keep the fixture hermetic: an ambient XDG_CONFIG_HOME / APPDATA on the
+  // runner would move the desktop home out from under it, and the child would
+  // then resolve a different directory than the one we wrote.
+  delete env.XDG_CONFIG_HOME;
+  delete env.APPDATA;
+  const desktopHome = kimiWorkCodeHome(env, process.platform, fakeHome);
   try {
     mkdirSync(cliHome, { recursive: true });
     mkdirSync(desktopHome, { recursive: true });
     writeWire(desktopHome, 'wd_venture_cap_6084fcc58cb8', '/work/venture_cap');
     writeWire(cliHome, 'wd_cli_project_abcdef', '/work/cli-project', start + 3600_000);
 
-    const env = { ...process.env, HOME: fakeHome, KIMI_CODE_HOME: cliHome };
-    delete env.VIBE_USAGE_KIMI_CODE_DIR;
     const result = runParse(env);
 
     assert.deepEqual(result.buckets.map(bucket => bucket.project).sort(), ['cli-project', 'venture_cap']);
