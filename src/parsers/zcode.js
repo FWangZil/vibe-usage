@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
-import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import { aggregateToBuckets, extractSessions } from './aggregate.js';
 import { queryDbJson, sqliteUnavailableError, isSqliteUnavailableError } from './sqlite.js';
+import { getZcodeDbPath } from '../tools.js';
 
 // ZCode (z.ai / Zhipu's coding agent) stores everything in a SQLite database
 // at ~/.zcode/cli/db/db.sqlite. The `message` table is the canonical source:
@@ -11,7 +11,9 @@ import { queryDbJson, sqliteUnavailableError, isSqliteUnavailableError } from '.
 // than the parallel `model_usage` ledger because `message` gives us BOTH session
 // timing (user + assistant rows) and token usage in one pass, with the project
 // path attached to each message.
-const DB_PATH = join(homedir(), '.zcode', 'cli', 'db', 'db.sqlite');
+export function resolveZcodeDbPath(env = process.env) {
+  return getZcodeDbPath(env);
+}
 
 /**
  * Project name from a ZCode message's path. ZCode records both `cwd` and `root`;
@@ -26,15 +28,20 @@ function projectName(root, cwd, sessionDir) {
 }
 
 export async function parse() {
-  if (!existsSync(DB_PATH)) return { buckets: [], sessions: [] };
+  const dbPath = resolveZcodeDbPath();
+  if (!existsSync(dbPath)) return { buckets: [], sessions: [] };
 
   // Join each message to its session so we can fall back to the session's
   // directory when an individual message has no path (older rows, lite agents).
+  // ZCode renamed the assistant message's model keys from `modelID` /
+  // `providerID` to `modelId` / `providerId`; read both spellings so neither
+  // build reports every bucket as `unknown`.
   const query = `SELECT
     m.session_id AS sessionId,
     m.time_created AS created,
     json_extract(m.data, '$.role') AS role,
     json_extract(m.data, '$.modelID') AS modelID,
+    json_extract(m.data, '$.modelId') AS modelId,
     json_extract(m.data, '$.tokens') AS tokens,
     json_extract(m.data, '$.path.root') AS pathRoot,
     json_extract(m.data, '$.path.cwd') AS pathCwd,
@@ -44,7 +51,7 @@ export async function parse() {
 
   let rows;
   try {
-    rows = queryDbJson(DB_PATH, query);
+    rows = queryDbJson(dbPath, query);
   } catch (err) {
     if (isSqliteUnavailableError(err)) throw sqliteUnavailableError('ZCode');
     throw err;
@@ -88,7 +95,7 @@ export async function parse() {
 
     entries.push({
       source: 'zcode',
-      model: row.modelID || 'unknown',
+      model: row.modelID || row.modelId || 'unknown',
       project,
       timestamp,
       inputTokens: (tokens.input || 0) - cachedInput,

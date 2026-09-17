@@ -32,7 +32,7 @@ vibe-usage/
 │   │   ├── pi-session-jsonl.js # Shared Pi/CraftAgent/OMP reader + copied-record dedup
 │   │   ├── craft-agent.js
 │   │   ├── qwen-code.js
-│   │   ├── kimi-code.js          # Both stores parsed+merged: ~/.kimi-code (root via $KIMI_CODE_HOME) + legacy ~/.kimi
+│   │   ├── kimi-code.js          # Every Kimi Code home merged: CLI ($KIMI_CODE_HOME / ~/.kimi-code) + Kimi Work desktop + legacy ~/.kimi
 │   │   ├── amp.js
 │   │   ├── droid.js
 │   │   ├── dsh.js              # DeepSeek Harness multi-frame zstd session logs
@@ -44,13 +44,16 @@ vibe-usage/
 │   │   ├── alma.js            # SQLite usage ledger; buckets only, no chat reads
 │   │   ├── mcode.js           # MiniMax Code runtime-state SQLite ledger (allow-listed token fields only)
 │   │   ├── workbuddy.js       # Streaming JSONL; actual routed-model usage + sessions
-│   │   └── zcode.js           # SQLite (via sqlite.js), reads message table
+│   │   ├── zcode.js           # SQLite (via sqlite.js), reads message table
+│   │   ├── devin.js           # SQLite (via sqlite.js) — Devin CLI/Desktop shared WAL store
+│   │   └── codebuddy.js       # Claude-Code-shaped transcripts under $CODEBUDDY_CONFIG_DIR / ~/.codebuddy
 │   ├── extra-roots.js         # Additional-root validation and per-source layout resolvers; used by config roots/add-root/remove-root
 │   ├── pi-roots.js            # Pi/OMP default, Pi-configured (env + settings.json), profile, XDG, and override discovery
 │   ├── cline-roots.js         # Current SDK + legacy standalone/VSCode-host Cline discovery
 │   ├── cola-roots.js          # Cola sessions discovery, including COLA_DATA_DIR
 │   ├── cindy-roots.js          # Cindy Global/CN Electron roots + per-owner DB discovery
 │   ├── craft-roots.js         # CraftAgent root resolution and detection
+│   ├── kimi-roots.js          # Kimi Code CLI home ($KIMI_CODE_HOME / ~/.kimi-code) + Kimi Work desktop embedded home; additive, de-duplicated roots
 │   ├── hermes-roots.js        # Shared Hermes CLI/Desktop home + profile discovery; Windows LOCALAPPDATA with legacy fallback
 │   ├── qoder-roots.js         # Qoder / Qoder CN edition table, CLI config dir + IDE data dir resolution, detection
 │   ├── workbuddy-roots.js     # WorkBuddy default and fixture/relocation roots
@@ -184,8 +187,35 @@ Every parser produces two parallel data streams:
 Per-message token usage aggregated into 30-minute windows via `aggregateToBuckets()`.
 
 ```js
-{ source, model, project, bucketStart, inputTokens, outputTokens, cachedInputTokens, reasoningOutputTokens, totalTokens }
+{ source, model, project, bucketStart, inputTokens, outputTokens, cachedInputTokens, reasoningOutputTokens, cacheCreation5mTokens, cacheCreation1hTokens, totalTokens }
 ```
+
+**Cache writes are a priced dimension, not input** (2026-09-16). Anthropic bills
+prompt-cache writes at **1.25x** (5-minute TTL) and **2x** (1-hour TTL) the base
+input rate, so `cacheCreation5mTokens` / `cacheCreation1hTokens` travel as their
+own columns instead of being folded into `inputTokens` the way `claude-code` did
+before. Folding them in under-billed real Claude buckets by 13-33% depending on
+the model. Rules for a parser that emits them:
+
+- Only split when the log actually distinguishes the two TTLs. An
+  unexplained remainder (a total with no breakdown, or a breakdown that sums to
+  less than the total) goes to the **5m** bucket — the cheaper multiplier, so a
+  partial log can only under-state cost.
+- `totalTokens` still includes them, so the number is bit-identical to what the
+  same log produced when they lived inside `inputTokens`; the server uses that
+  field only as a `> 0` liveness filter and no bucket may silently drop out.
+- Parsers that cannot tell the TTLs apart (the Pi family, Cline SDK, DSH, Cindy)
+  keep folding cache writes into `inputTokens` and leave both new fields at 0.
+  That is a known remaining divergence, not an invariant.
+- `state.js` `bucketHash()` covers both fields, so a pure 5m↔1h reclassification
+  still re-uploads.
+
+**Fast mode is a service tier.** Claude Code records `message.usage.speed`
+(`'standard'` | `'fast'`); `'fast'` doubles Opus 5 / Opus 4.8 input and output
+rates. The parser appends a `-fast` marker to the model id, which the server's
+pricing map resolves through `TIER_MARKER_SUFFIX` → `tiers.priority`. Models
+with no published priority tier fall back to their base rate, so the marker is
+safe to append unconditionally.
 
 ### Track 2: Sessions
 Timing events fed to `extractSessions()` for interaction metadata.
@@ -236,10 +266,10 @@ Qoder parsers (`qoder.js`, two editions via `../qoder-roots.js`):
 - `~/.qoder` alone does not mean the CLI is installed (the IDE's `dataFolderName` is `.qoder` too); detection checks `projects/` or the IDE db.
 
 Cline (`cline.js`, `cline-sdk.js`, `cline-roots.js`):
-- Cline CLI 3.0.61 / core 0.0.82 writes per-call metrics to `~/.cline/data/sessions/<id>/*.messages.json`; `data/db/sessions.db` is only an index and is not needed for accounting. Read the adjacent version-1 `<id>.json` manifest for project/model fallback. Include child-agent artifacts in that same session directory. Keep old standalone and editor `state/taskHistory.json` + `tasks/<id>/ui_messages.json` stores, including the legacy `~/.cline/data` layout. Honor `CLINE_DIR`, `CLINE_DATA_DIR`, and `CLINE_SESSION_DATA_DIR`; `VIBE_USAGE_CLINE_DIRS` replaces all machine discovery for fixtures.
+- Cline CLI 3.0.61 / core 0.0.82 and the Cline desktop app (0.0.28) write the same per-call metrics to `~/.cline/data/sessions/<id>/*.messages.json`; the desktop manifest carries `source: "desktop"` + `metadata.sessionHistoryOrigin`, its Electron userData holds no usage, and its user messages have no `metadata` (still human prompts). `data/db/sessions.db` is only an index and is not needed for accounting. Read the adjacent version-1 `<id>.json` manifest for project/model fallback. Include child-agent artifacts in that same session directory. Keep old standalone and editor `state/taskHistory.json` + `tasks/<id>/ui_messages.json` stores, including the legacy `~/.cline/data` layout. Honor `CLINE_DIR`, `CLINE_DATA_DIR`, and `CLINE_SESSION_DATA_DIR`; `VIBE_USAGE_CLINE_DIRS` replaces all machine discovery for fixtures.
 - SDK `metrics.inputTokens` already includes cache reads and writes: subtract `cacheReadTokens` once into `cachedInputTokens`, leaving cache writes in ordinary input. `outputTokens` is already the full output; the persisted metrics have no separate reasoning field. Never read stored cost as the estimated price. Legacy `tokensIn` is uncached input, so its existing cache-write addition stays unchanged.
 - SDK assistant message ids and timestamps identify copied history; keep the richest metrics, with deterministic attribution to the earliest original session. Anonymous messages are scoped to the artifact/session and position. Preserve the existing legacy task-copy selection and upload session ids. Ignore child-agent prompts, tool results, and synthetic user events when counting human turns. Legacy-to-SDK migration can attach cumulative usage to an old assistant without a timestamp: skip that record instead of assigning it the migration time; the legacy store retains the original accounting.
-- Read canonical `.messages.json` artifacts only, not compaction sidecars or backups. Reduce parsed records to token/model/timing fields; do not retain or upload message content, system prompts, provider credentials, or costs. Unreadable, corrupt, or unsupported SDK artifacts return `skipped` with warnings so earlier upload state is preserved. Regression coverage: `test/cline.test.js` and `test/cline-sdk.test.js`.
+- Read canonical `.messages.json` artifacts only, not compaction sidecars or backups. Reduce parsed records to token/model/timing fields; do not retain or upload message content, system prompts, provider credentials, or costs. **Failures split by kind** (issue #100): a *format* mismatch (`version !== 1`, session id mismatch, non-array messages) or an unreadable root means any snapshot would be wrong, so the source returns `skipped` and its earlier upload state is preserved; an *IO* failure on a single artifact (the desktop app rewrites these in place, so truncated JSON is normal) drops only that artifact, names the file in the warning, and the rest of the store still syncs — the dropped session re-uploads once it is complete again. Regression coverage: `test/cline.test.js` and `test/cline-sdk.test.js`.
 - Service installation preserves all three Cline directory environment variables for launchd, systemd, and Windows tasks, so background sync sees the same relocated store as manual sync. Existing services need reinstallation to capture a newly set variable.
 - Verified using the installed official CLI in an isolated directory with a local OpenAI-compatible test endpoint: a new headless conversation followed by an interactive `--id` resume wrote two calls of 100 input (including 30 cache reads) and 20 output; parsing yielded 140 uncached input, 60 cache reads, 40 output, and one session with two human prompts. No paid provider call or backend upload was used for that verification.
 
@@ -254,6 +284,17 @@ WorkBuddy JSONL parser (`workbuddy.js`):
 - Use the top-level usage-record id for copied-record dedup and `providerData.requestModelId` for the routed model identifier exposed by WorkBuddy. A conversation request id can span multiple billable model calls and is not a dedup key.
 - WorkBuddy aggregate input/output counts include cache reads/reasoning. Split those subsets before `aggregateToBuckets()` so token categories do not overlap. Count usage from completed assistant records and usage-bearing `function_call` records.
 - Emit timing events from user records, completed assistant records, and usage-bearing `function_call` records; pass only sessions with a user prompt to `extractSessions()`.
+
+CodeBuddy parser (`codebuddy.js`):
+- Tencent's CodeBuddy Code CLI (`@tencent-ai/codebuddy-code`, verified against 2.151.0) keeps Claude-Code-shaped transcripts: `<home>/projects/<compressed-cwd>/<sessionId>.jsonl` plus nested subagent directories, where `<home>` is `$CODEBUDDY_CONFIG_DIR` or `~/.codebuddy` (`VIBE_USAGE_CODEBUDDY_DIRS` replaces discovery for fixtures). Transcripts mix two record shapes — local turns are `{type:"message", role, content, sessionId, cwd}`, while **every successful model call is the API message shape** whose accounting lives under `message.usage`. Read usage only from there; never from the local turn shape, which has no counters.
+- `usage.input_tokens` is uncached input; `cache_creation_input_tokens` folds into input because the store writes `usage.cache_creation` as `null` (no per-TTL breakdown exists, so this parser cannot join the 5m/1h split); `cache_read_input_tokens` stays separate; `output_tokens` is the full completion (thinking blocks are content, not a counter).
+- One logical call can appear more than once (retry/copy). Dedupe on `message.id` → `providerData.messageId` → the record's own `id`, keeping the largest payload so a zeroed copy never wins; records with no identity at all still count, one per record. `providerData.conversationRequestId` is a *turn* id (one turn can hold several billable calls) and MUST NOT be a dedup key. Verified against a real store: a successful call writes **no** `message.id`, so keying on it alone collapses a whole session onto one call.
+- Model resolution is `message.model` → `providerData.requestModelId` → `providerData.model` → `unknown`: a real successful call writes `message.model: null` and keeps the routed id in `providerData` (`requestModelName` is the display label, e.g. "Auto").
+- When the CLI routes through a non-Anthropic provider, `usage.cache_creation_input_tokens` is absent outright (not just null) — `toCount()` on a missing field must be 0.
+- Pricing-map check before shipping: routing/tier labels coming out of `providerData.requestModelId` are namespaced as `codebuddy-<tier>` (`auto`, `default`, `default-model`, `fast`, `turbo`, `lite`, `ultimate`, `performance`, `efficient`). Server-side pricing matches the model string alone, and a bare `auto` is priced as *Cursor's* auto — the collision PR #83 fixed for Qoder. Concrete ids (`claude-sonnet-4-6`, …) must keep passing through unchanged so they still price correctly.
+- Verified end to end without an account: official CLI 2.151.0 pointed at a local OpenAI-compatible mock (`CODEBUDDY_BASE_URL` + `CODEBUDDY_API_KEY`, `/chat/completions`) wrote a real transcript; the parser then reproduced its counters exactly (input 100, output 20, cache read 30, project from `cwd`).
+- Human prompts are local `role:"user"` turns that are not injected: skip `providerData.isMeta` / `skipRun` / `isSessionSeparator` / `isCompactSummary`. Project comes from the record's `cwd`, falling back to the last segment of the compressed project folder.
+- A transcript that cannot be read marks the whole source `skipped` so its previous upload state survives; the parser streams each file line-by-line and keeps only accounting/timing fields (no prompt text, thinking signatures, or tool payloads). Regression coverage: `test/codebuddy.test.js`.
 
 Codex forked sessions (`codex.js`):
 - Forking a Codex conversation writes a *new* rollout file that replays the entire source conversation at the top — every `event_msg/token_count` included, all timestamped in a 1–3s burst at the fork instant. Those tokens are already counted from the source session's own file, so naively parsing the fork double-counts and spikes token/cost at the fork timestamp.
@@ -309,7 +350,7 @@ node --test test/cli.test.js test/codex-roots.test.js test/grok.test.js test/pi-
 Test hooks (env vars honored at module load, set them before importing):
 - `VIBE_USAGE_STATE_DIR` / `VIBE_USAGE_CONFIG_DIR` — redirect `state.js` / `config.js` away from the real `~/.vibe-usage` (used by `test/state.test.js`, `test/reset.test.js`)
 - Codex cache controls: `VIBE_USAGE_CACHE_DIR` redirects cache writes, `VIBE_USAGE_CODEX_CACHE=0` disables the optimization, `VIBE_USAGE_CODEX_WORK_BUDGET_MS` overrides the non-interactive build budget, and `VIBE_USAGE_CODEX_AUDIT_INTERVAL_MS` / `VIBE_USAGE_CODEX_AUDIT_MAX_BYTES` override rolling-audit bounds
-- Per-parser fixtures: `CODEX_HOME`, `VIBE_USAGE_ALMA_DB`, `VIBE_USAGE_CINDY_DIRS`, `VIBE_USAGE_GROK_SESSIONS`, `VIBE_USAGE_KIMI_CODE_DIR`, `VIBE_USAGE_KIMI_DIR`, `VIBE_USAGE_TRAE_CLI_SESSIONS`, `VIBE_USAGE_WORKBUDDY_DIRS`, `VIBE_USAGE_KIRO_LEGACY_TOKENS`, `VIBE_USAGE_DSH_SESSIONS`, `VIBE_USAGE_QODER_PROJECTS` / `VIBE_USAGE_QODER_DB` / `VIBE_USAGE_QODER_CN_PROJECTS` / `VIBE_USAGE_QODER_CN_DB` (the Qoder parser otherwise honors Qoder's own `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` for transcripts and `QODER_HOME` / `QODER_CN_HOME` for the IDE store). The Kimi Code parser resolves its data root as `VIBE_USAGE_KIMI_CODE_DIR` → `KIMI_CODE_HOME` (matching the CLI) → `~/.kimi-code`, and always merges the legacy `~/.kimi` store instead of either/or (`kimi migrate` drops usage records, so no double-count)
+- Per-parser fixtures: `CODEX_HOME`, `VIBE_USAGE_ALMA_DB`, `VIBE_USAGE_CINDY_DIRS`, `VIBE_USAGE_CODEBUDDY_DIRS`, `VIBE_USAGE_DEVIN_DB`, `VIBE_USAGE_GROK_SESSIONS`, `VIBE_USAGE_KIMI_CODE_DIR`, `VIBE_USAGE_KIMI_DIR`, `VIBE_USAGE_TRAE_CLI_SESSIONS`, `VIBE_USAGE_WORKBUDDY_DIRS`, `VIBE_USAGE_KIRO_LEGACY_TOKENS`, `VIBE_USAGE_DSH_SESSIONS`, `VIBE_USAGE_QODER_PROJECTS` / `VIBE_USAGE_QODER_DB` / `VIBE_USAGE_QODER_CN_PROJECTS` / `VIBE_USAGE_QODER_CN_DB` (the Qoder parser otherwise honors Qoder's own `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` for transcripts and `QODER_HOME` / `QODER_CN_HOME` for the IDE store). The Kimi Code parser resolves its data root as `VIBE_USAGE_KIMI_CODE_DIR` → `KIMI_CODE_HOME` (matching the CLI) → `~/.kimi-code`, and always merges the legacy `~/.kimi` store instead of either/or (`kimi migrate` drops usage records, so no double-count)
 - Claude fixtures: `VIBE_USAGE_CLAUDE_DIRS` replaces normal Claude root discovery with a `path.delimiter`-separated root list; `VIBE_USAGE_CLAUDE_DESKTOP_DIRS` overrides only the Claude Desktop user-data roots. The production parser scans `~/.claude`, `$CLAUDE_CONFIG_DIR`, data-bearing `~/.claude-*` profiles, and the per-session `.claude` roots created below Claude Desktop's `local-agent-mode-sessions`. Desktop Code already writes to the normal Claude Code root, while Cowork uses the private roots. Both remain source `claude-code`. The parser streams each JSONL file to its captured size, de-duplicates usage by API call identity (`message.id` + `requestId`, falling back to the line `uuid` when a record carries neither) keeping the most complete payload for each call, and returns `skipped` with warnings after any read failure so incremental state is not pruned. Claude Code writes one assistant line per content block - all sharing the call ids and repeating the same `usage` object - plus an early partial line while streaming, so a per-line key counted a single call once per block.
 - Pi-family/Cline/OpenClaw fixtures: `VIBE_USAGE_PI_SESSION_DIRS`, `VIBE_USAGE_OMP_SESSION_DIRS`, `VIBE_USAGE_CLINE_DIRS`, and `VIBE_USAGE_OPENCLAW_DIRS` replace normal discovery with `path.delimiter`-separated roots. Pi still appends explicit `extraRoots`, as described in [Additional Runtime Roots](#additional-runtime-roots).
 

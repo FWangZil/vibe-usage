@@ -7,8 +7,13 @@ import { readClineSdk } from './cline-sdk.js';
 
 export async function parse() {
   const warnings = [];
+  // Format drift or an unreadable root means we cannot describe the store:
+  // skip the source so its previous upload state survives. A single unreadable
+  // artifact only drops that artifact (it re-uploads on the next sync).
+  let fatal = false;
   const onWarning = message => warnings.push(message);
-  const { legacyRoots: extDirs, sdkSessionDirs } = findClineStores({ onWarning });
+  const onFatal = message => { fatal = true; warnings.push(message); };
+  const { legacyRoots: extDirs, sdkSessionDirs } = findClineStores({ onWarning: onFatal });
 
   const entries = [];
   const events = [];
@@ -90,8 +95,9 @@ export async function parse() {
       }
   }
 
-  const sdk = readClineSdk(sdkSessionDirs, onWarning);
-  if (warnings.length) return { buckets: [], sessions: [], skipped: true, warnings };
+  const sdk = readClineSdk(sdkSessionDirs, { onWarning, onFatal });
+  if (fatal) return { buckets: [], sessions: [], skipped: true, warnings };
   return { buckets: aggregateToBuckets([...entries, ...sdk.entries]),
-    sessions: extractSessions([...events, ...sdk.events]) };
+    sessions: extractSessions([...events, ...sdk.events]),
+    warnings };
 }

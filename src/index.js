@@ -9,6 +9,7 @@ import {
   validateExtraRoot,
 } from './extra-roots.js';
 import { dim as dimText, failure, hint, smallHeader, warn } from './output.js';
+import { loadState } from './state.js';
 import { fetchAccount } from './api.js';
 import { COLLECTOR_VERSION } from './client-meta.js';
 
@@ -16,6 +17,25 @@ function printSmallHeader() {
   console.log();
   console.log(smallHeader());
   console.log();
+}
+
+/**
+ * Per-source counts of everything `state.json` records as uploaded. Keys are
+ * `${source}|…` (see state.js), so the source is the first segment.
+ */
+function uploadedItemCounts(state) {
+  const countBySource = keys => {
+    const counts = new Map();
+    for (const key of keys) {
+      const source = key.split('|')[0];
+      counts.set(source, (counts.get(source) || 0) + 1);
+    }
+    return counts;
+  };
+  return {
+    buckets: countBySource(Object.keys(state.buckets || {})),
+    sessions: countBySource(Object.keys(state.sessions || {})),
+  };
 }
 
 async function showStatus() {
@@ -50,8 +70,21 @@ async function showStatus() {
   if (detected.length === 0) {
     console.log('    (none)\n');
   } else {
+    // "installed" alone cannot separate "syncing fine" from "never uploaded":
+    // a tool whose data dir exists but whose buckets never reached the server
+    // reads exactly like a healthy one, which is how a stale bundled CLI stayed
+    // invisible (issue #100). state.json is the only local record of what was
+    // actually uploaded, so count it per source.
+    const uploaded = uploadedItemCounts(loadState());
     for (const tool of detected) {
-      console.log(`    ${tool.name}`);
+      const buckets = uploaded.buckets.get(tool.id) || 0;
+      const sessions = uploaded.sessions.get(tool.id) || 0;
+      if (buckets || sessions) {
+        console.log(`    ${tool.name}  ·  已上传 ${buckets} buckets / ${sessions} sessions`);
+      } else {
+        console.log(`    ${tool.name}  ·  尚未上传过数据`);
+        console.log(dimText('       本机检测到数据，但本地没有这条工具的上传记录：运行 `npx @vibe-cafe/vibe-usage` 同步'));
+      }
     }
     console.log();
   }

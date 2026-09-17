@@ -122,11 +122,41 @@ test('legacy data/ store remains additive and migrated cumulative metrics are no
   assert.equal(result.sessions[0].userMessageCount, 2);
 }));
 
-test('corrupt or unsupported SDK artifacts skip the source instead of pruning old state', async () => fixture(async root => {
+// A half-written artifact is a normal transient state (the desktop app rewrites
+// these files in place): drop just that one, keep syncing the rest, and say so.
+test('a transient unreadable artifact is dropped while the rest of the store still syncs', async () => fixture(async root => {
+  const brokenDir = writeSession(root, 'broken', [
+    user('bu', start + 60_000), assistant('ba', start + 61_000, 'other-model'),
+  ]);
+  writeSession(root, 'healthy', [user('u'), assistant('a')]);
+
+  const path = join(brokenDir, 'broken.messages.json');
+  writeFileSync(path, '{'); // mid-write truncation
+  const result = await parse();
+  assert.equal(result.skipped, undefined);
+  assert.equal(result.buckets.length, 1, 'the healthy session must still upload');
+  assert.equal(result.buckets[0].model, 'test-model');
+  assert.equal(result.buckets[0].inputTokens, 70);
+  assert.equal(result.buckets[0].cachedInputTokens, 30);
+  assert.ok(result.warnings.some(w => w.includes('broken.messages.json')), 'the dropped file must be named');
+  assert.equal(result.sessions.length, 1);
+
+  // Once the file is complete again its usage comes back on the next sync.
+  writeSession(root, 'broken', [
+    user('bu', start + 60_000), assistant('ba', start + 61_000, 'other-model'),
+  ]);
+  const healed = await parse();
+  assert.equal(healed.skipped, undefined);
+  assert.deepEqual(healed.buckets.map(b => b.model).sort(), ['other-model', 'test-model']);
+}));
+
+// A format mismatch is not transient — the store moved on, so any snapshot we
+// produce would be wrong. Skip the source; sync.js keeps its upload state.
+test('unsupported artifact or manifest formats still skip the whole source', async () => fixture(async root => {
   const dir = writeSession(root, 'one', [user('u'), assistant('a')]);
   const path = join(dir, 'one.messages.json');
   const before = readFileSync(path);
-  for (const value of ['{', JSON.stringify({ version: 2, messages: [] }), JSON.stringify({ version: 1, sessionId: 'wrong', messages: [] })]) {
+  for (const value of [JSON.stringify({ version: 2, messages: [] }), JSON.stringify({ version: 1, sessionId: 'wrong', messages: [] })]) {
     writeFileSync(path, value);
     const result = await parse();
     assert.equal(result.skipped, true);
@@ -134,7 +164,13 @@ test('corrupt or unsupported SDK artifacts skip the source instead of pruning ol
     assert.ok(result.warnings.length > 0);
   }
   writeFileSync(path, before);
-  assert.equal((await parse()).skipped, undefined);
+  const unsupportedManifest = await parse();
+  assert.equal(unsupportedManifest.skipped, undefined);
+
+  writeFileSync(join(dir, 'one.json'), JSON.stringify({ version: 2, session_id: 'one' }));
+  const manifestResult = await parse();
+  assert.equal(manifestResult.skipped, true);
+  assert.deepEqual(manifestResult.buckets, []);
 }));
 
 test('SDK discovery honors CLINE_DATA_DIR without requiring a diagnostic override', async () => fixture(async root => {
@@ -144,4 +180,45 @@ test('SDK discovery honors CLINE_DATA_DIR without requiring a diagnostic overrid
   const result = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e',
     'import { findClineDataDirs } from "./src/cline-roots.js"; console.log(JSON.stringify(findClineDataDirs()))'], { cwd: new URL('..', import.meta.url), env, encoding: 'utf8' }));
   assert.ok(result.includes(join(root, 'data', 'sessions')));
+}));
+
+// Shape read off Cline desktop 0.0.28: same artifacts as the CLI/SDK, but the
+// manifest says `source: "desktop"` (plus `metadata.sessionHistoryOrigin`) and
+// desktop user messages carry no `metadata` at all — they are still human turns.
+test('Cline desktop app artifacts are read as ordinary cline usage', async () => fixture(async root => {
+  const id = 'session_desktop_1';
+  writeSession(root, id, [
+    { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], ts: start },
+    { id: 'm2', role: 'assistant', modelInfo: { id: 'deepseek-v4-flash' },
+      metrics: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 0 },
+      ts: start + 1000 },
+  ], {
+    manifest: {
+      source: 'desktop',
+      provider: 'deepseek',
+      model: 'deepseek-v4-flash',
+      cwd: '/work/desktop-project',
+      workspace_root: '/work/desktop-project',
+      metadata: {
+        sessionHistoryOrigin: { mode: 'user', version: '0.0.27' },
+        source: 'desktop',
+        usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 400, cacheWriteTokens: 0 },
+      },
+      messages_path: join(root, 'data', 'sessions', id, `${id}.messages.json`),
+    },
+    payload: {
+      origin: { source: 'desktop', mode: 'user', sessionId: id, version: '0.0.27' },
+    },
+  });
+  const result = await parse();
+  assert.equal(result.skipped, undefined);
+  assert.equal(result.buckets.length, 1);
+  const bucket = result.buckets[0];
+  assert.equal(bucket.project, 'desktop-project');
+  assert.equal(bucket.model, 'deepseek-v4-flash');
+  assert.equal(bucket.inputTokens, 600); // metrics.inputTokens includes the cache read
+  assert.equal(bucket.cachedInputTokens, 400);
+  assert.equal(bucket.outputTokens, 100);
+  assert.equal(result.sessions.length, 1);
+  assert.equal(result.sessions[0].userMessageCount, 1);
 }));

@@ -5,12 +5,30 @@ import { projectFromCwd, toCount } from './fs-utils.js';
 // Verified with the shipped cline 3.0.61 / @cline/core 0.0.82. SQLite is only
 // the session index: per-call accounting lives in version-1 messages artifacts.
 // Read canonical artifacts, not DB prompt/metadata columns or provider settings.
-export function readClineSdk(sessionDirs, onWarning) {
+//
+// Two failure sizes, because they mean different things (see AGENTS.md):
+// a *format* mismatch means the store moved on and any number we produce would
+// be wrong, so the caller must skip the source and keep its previous upload
+// state; an *IO* failure on one artifact (the desktop app rewrites these files
+// in place, so half-written JSON is normal) drops only that artifact, while the
+// rest of the store still syncs. Transient losses re-upload on the next sync.
+function unsupported(message) {
+  const error = new Error(message);
+  error.clineUnsupported = true;
+  return error;
+}
+
+export function readClineSdk(sessionDirs, { onWarning = () => {}, onFatal = () => {} } = {}) {
   const copies = [];
   for (const dir of sessionDirs) {
     let children;
     try { children = readdirSync(dir, { withFileTypes: true }); }
-    catch (err) { onWarning(`cline: 无法读取会话目录 ${dir}: ${err.message}`); continue; }
+    catch (err) {
+      // Cannot enumerate this root: the snapshot may be missing sessions we
+      // could not even list, so the whole source is unsafe this run.
+      onFatal(`cline: 无法读取会话目录 ${dir}: ${err.message}`);
+      continue;
+    }
     for (const child of children) {
       if (!child.isDirectory()) continue;
       const sessionDir = join(dir, child.name);
@@ -21,10 +39,11 @@ export function readClineSdk(sessionDirs, onWarning) {
         if (!files.length) continue;
         manifest = JSON.parse(readFileSync(join(sessionDir, `${child.name}.json`), 'utf8'));
         if (manifest?.version !== 1 || manifest.session_id !== child.name) {
-          throw new Error('unsupported or inconsistent Cline session manifest');
+          throw unsupported('unsupported or inconsistent Cline session manifest');
         }
       } catch (err) {
-        onWarning(`cline: 无法读取会话目录 ${sessionDir}: ${err.message}`);
+        if (err?.clineUnsupported) onFatal(`cline: 不支持或不一致的会话清单 ${sessionDir}: ${err.message}`);
+        else onWarning(`cline: 跳过无法读取的会话目录 ${sessionDir}: ${err.message}`);
         continue;
       }
       for (const file of files) {
@@ -34,7 +53,7 @@ export function readClineSdk(sessionDirs, onWarning) {
           if (payload?.version !== 1 || !Array.isArray(payload.messages)
             || typeof payload.sessionId !== 'string'
             || (payload.sessionId !== child.name && payload.origin?.parentThreadId !== child.name)) {
-            throw new Error('unsupported or inconsistent Cline session artifact');
+            throw unsupported('unsupported or inconsistent Cline session artifact');
           }
           const project = projectFromCwd(manifest.workspace_root || manifest.cwd);
           // Reduce immediately to accounting/timing metadata. No prompt, response,
@@ -68,7 +87,8 @@ export function readClineSdk(sessionDirs, onWarning) {
             // shared history to the earliest original session deterministically.
             started: Date.parse(manifest.started_at) || 0, messagesPath });
         } catch (err) {
-          onWarning(`cline: 无法读取会话 ${messagesPath}: ${err.message}`);
+          if (err?.clineUnsupported) onFatal(`cline: 不支持或不一致的会话文件 ${messagesPath}: ${err.message}`);
+          else onWarning(`cline: 跳过无法读取的会话文件 ${messagesPath}: ${err.message}`);
         }
       }
     }
