@@ -18,16 +18,25 @@ const userRecord = {
   sessionId: '01a0ae1f-5636-772f-af89-4d1f303fff8f', cwd: '/work/demo-project',
   providerData: { agent: 'main' },
 };
+// Verified against a real store (CLI 2.151.0, local mock endpoint): the model call
+// record carries NO `message.id` and `message.model` is null — the identity and the
+// routed model live in `providerData`, and switch-provider runs omit
+// `cache_creation_input_tokens` entirely.
 const assistantRecord = (overrides = {}) => ({
-  type: 'assistant', uuid: 'a926766d-e771-47d2-b275-6d5456df4c02',
-  session_id: '01a0ae1f-5636-772f-af89-4d1f303fff8f', timestamp: start + 2000,
+  id: '01a0ae23-f645-7ffe-8821-efceb64efe3c', parentId: '01a0ae23-f645-7ffe-8821-efceb64efe3b',
+  type: 'assistant', timestamp: start + 2000,
   sessionId: '01a0ae1f-5636-772f-af89-4d1f303fff8f', cwd: '/work/demo-project',
   message: {
-    id: 'msg_01a926766d', model: 'claude-sonnet-4-6', role: 'assistant', type: 'message',
+    model: null, role: 'assistant', type: 'message', stop_reason: 'end_turn',
     usage: {
-      input_tokens: 100, output_tokens: 47, cache_read_input_tokens: 1344,
-      cache_creation_input_tokens: 10, cache_creation: null,
+      input_tokens: 100, output_tokens: 47, total_tokens: 1501,
+      cache_read_input_tokens: 1344, cache_creation_input_tokens: 10, cache_creation: null,
     },
+  },
+  providerData: {
+    agent: 'cli', conversationRequestId: '01a0ae23f3467747a460570ef66d510f',
+    messageId: '01a0ae23f6457ffe8821efcda5e1f952', model: 'claude-sonnet-4-6',
+    requestModelId: 'claude-sonnet-4-6', requestModelName: 'Auto',
   },
   ...overrides,
 });
@@ -74,7 +83,7 @@ test('codebuddy reads API-message usage, folds cache writes into input, keeps pr
   assert.equal(result.buckets.length, 1);
   const bucket = result.buckets[0];
   assert.equal(bucket.source, 'codebuddy');
-  assert.equal(bucket.model, 'claude-sonnet-4-6');
+  assert.equal(bucket.model, 'claude-sonnet-4-6'); // providerData.requestModelId: message.model is null
   assert.equal(bucket.project, 'demo-project'); // from the record's cwd
   assert.equal(bucket.inputTokens, 110); // input_tokens + cache_creation_input_tokens
   assert.equal(bucket.cachedInputTokens, 1344);
@@ -92,7 +101,7 @@ test('codebuddy reads API-message usage, folds cache writes into input, keeps pr
 }));
 
 test('codebuddy collapses a retried/copied call onto its most complete payload', async () => fixture(async root => {
-  const zeroed = assistantRecord();
+  const zeroed = assistantRecord({ id: '01a0ae23-f645-7ffe-8821-efceb64efe99' });
   zeroed.message.usage = {
     input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0,
     cache_creation_input_tokens: null, cache_creation: null,
@@ -101,13 +110,29 @@ test('codebuddy collapses a retried/copied call onto its most complete payload',
 
   const result = await parse();
   assert.equal(result.buckets.length, 1, 'one logical call must produce one bucket');
-  assert.equal(result.buckets[0].inputTokens, 110);
+  assert.equal(result.buckets[0].inputTokens, 110, 'the zeroed copy must not win');
+}));
+
+test('codebuddy counts every distinct call, including records with no id at all', async () => fixture(async root => {
+  // Regression: the real record has no `message.id`, so a dedup key built from it
+  // alone is empty and collapses the whole session onto one call.
+  // Same model, but no identity anywhere: must still count as its own call.
+  const anonymous = assistantRecord({ id: undefined, providerData: { agent: 'cli', requestModelId: 'claude-sonnet-4-6' } });
+  const copy = assistantRecord({ id: '01a0ae23-f645-7ffe-8821-efceb64efe77' }); // same providerData.messageId = same logical call
+  writeTranscript(root, 'private-work-demo-project', 'session-1', [userRecord, assistantRecord(), anonymous, copy]);
+
+  const result = await parse();
+  assert.equal(result.buckets.length, 1);
+  assert.equal(result.buckets[0].inputTokens, 220, 'two distinct calls plus one collapsed copy');
+  assert.equal(result.buckets[0].outputTokens, 94);
 }));
 
 test('codebuddy falls back to the compressed folder name when a record has no cwd', async () => fixture(async root => {
-  const withoutCwd = assistantRecord({ timestamp: start + 4000 });
+  const withoutCwd = assistantRecord({
+    timestamp: start + 4000,
+    providerData: { ...assistantRecord().providerData, messageId: 'msg_other' },
+  });
   delete withoutCwd.cwd;
-  withoutCwd.message = { ...withoutCwd.message, id: 'msg_other' };
   writeTranscript(root, 'private-tmp-cb-probe', 'session-2', [
     { ...userRecord, cwd: undefined },
     withoutCwd,

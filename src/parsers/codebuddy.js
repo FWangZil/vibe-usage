@@ -71,15 +71,27 @@ function usageEntry(obj, projectFallback, sessionId) {
   if (!inputTokens && !outputTokens && !cachedInputTokens) return null;
 
   const messageId = typeof obj.message?.id === 'string' ? obj.message.id.trim() : '';
-  const requestId = typeof obj.requestId === 'string' ? obj.requestId.trim() : '';
-  const dedupeKey = messageId || requestId ? `call:${messageId}\u0000${requestId}` : null;
+  const providerMessageId = typeof obj.providerData?.messageId === 'string' ? obj.providerData.messageId.trim() : '';
+  const ownId = typeof obj.id === 'string' ? obj.id.trim() : '';
+  // The CLI leaves `message.id` empty on some builds and keeps the per-message id
+  // in providerData; `conversationRequestId` is a *turn* id (one turn can hold
+  // several billable calls), so it is explicitly not a dedup key. Without this
+  // chain every call collapses onto one empty key and the session under-counts.
+  const identity = messageId || providerMessageId || ownId;
+  const dedupeKey = identity ? `call:${identity}` : null;
+
+  const model = [
+    obj.message?.model,
+    obj.providerData?.requestModelId,
+    obj.providerData?.model,
+  ].find(value => typeof value === 'string' && value.trim()) || 'unknown';
 
   return {
     dedupeKey,
     usageScore: inputTokens + outputTokens + cachedInputTokens,
     entry: {
       source: SOURCE,
-      model: (typeof obj.message?.model === 'string' && obj.message.model.trim()) || 'unknown',
+      model,
       project: projectFromCwd(obj.cwd, projectFallback),
       timestamp,
       inputTokens,
