@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import { homedir } from 'node:os';
 import { getOpenCodeStores } from './opencode-roots.js';
 import { findClaudeCodeDataDirs } from './claude-roots.js';
@@ -180,6 +180,12 @@ export function getMimocodeDbPath(env = process.env) {
     : join(env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'mimocode');
   if (!env.MIMOCODE_DB) return join(dataDir, 'mimocode.db');
   return isAbsolute(env.MIMOCODE_DB) ? env.MIMOCODE_DB : join(dataDir, env.MIMOCODE_DB);
+}
+
+export function getCodebuddyRoots(env = process.env, home = homedir()) {
+  const override = env.VIBE_USAGE_CODEBUDDY_DIRS?.trim();
+  if (override) return override.split(delimiter).map(value => value.trim()).filter(Boolean);
+  return [env.CODEBUDDY_CONFIG_DIR?.trim() || join(home, '.codebuddy')];
 }
 
 export function getZcodeDbPath(env = process.env, home = homedir()) {
@@ -450,6 +456,12 @@ export const TOOLS = [
     name: 'ZCode',
     id: 'zcode',
     dataDir: getZcodeDbPath(),
+  },
+  {
+    name: 'CodeBuddy',
+    id: 'codebuddy',
+    dataDir: join(getCodebuddyRoots()[0], 'projects'),
+    detectDataDirs: () => getCodebuddyRoots().map(root => join(root, 'projects')).filter(existsSync),
   },
   {
     name: 'Devin',

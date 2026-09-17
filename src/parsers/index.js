@@ -29,6 +29,7 @@ import { parse as parseTraeCli } from './trae-cli.js';
 import { parse as parseWorkbuddy } from './workbuddy.js';
 import { parseQoder, parseQoderCn } from './qoder.js';
 import { parse as parseDevin } from './devin.js';
+import { parse as parseCodebuddy } from './codebuddy.js';
 
 export const parsers = {
   'claude-code': parseClaudeCode,
@@ -63,6 +64,7 @@ export const parsers = {
   'workbuddy': parseWorkbuddy,
   'zcode': parseZcode,
   'devin': parseDevin,
+  'codebuddy': parseCodebuddy,
 };
 
 export { roundToHalfHour, aggregateToBuckets, extractSessions } from './aggregate.js';
