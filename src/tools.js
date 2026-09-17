@@ -161,6 +161,16 @@ export function getMcodeDbPath(env = process.env, home = homedir()) {
   return join(root, 'v2', 'sqlite', 'runtime-state.sqlite');
 }
 
+// Devin (CLI and Desktop share one agent backend) keeps all sessions in a
+// single WAL database: $XDG_DATA_HOME/devin/cli/sessions.db, defaulting to
+// ~/.local/share/devin/cli/sessions.db. Fixture override: VIBE_USAGE_DEVIN_DB.
+export function getDevinDbPath(env = process.env, home = homedir()) {
+  const override = env.VIBE_USAGE_DEVIN_DB?.trim();
+  if (override) return isAbsolute(override) ? override : resolve(override);
+  const dataHome = env.XDG_DATA_HOME?.trim() || join(home, '.local', 'share');
+  return join(dataHome, 'devin', 'cli', 'sessions.db');
+}
+
 export function getMimocodeDbPath(env = process.env) {
   if (env.MIMOCODE_HOME && !isAbsolute(env.MIMOCODE_HOME)) {
     throw new Error(`MIMOCODE_HOME must be an absolute path, got: ${JSON.stringify(env.MIMOCODE_HOME)}`);
@@ -440,6 +450,12 @@ export const TOOLS = [
     name: 'ZCode',
     id: 'zcode',
     dataDir: getZcodeDbPath(),
+  },
+  {
+    name: 'Devin',
+    id: 'devin',
+    dataDir: getDevinDbPath(),
+    detectDataDirs: () => [getDevinDbPath()].filter(existsSync),
   },
 ];
 
